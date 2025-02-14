@@ -12,3 +12,6 @@ logs/
 
 # Настройки среды
 .env
+# 
+.Sammaryhelper/configs
+.Sammaryhelper/sessions
