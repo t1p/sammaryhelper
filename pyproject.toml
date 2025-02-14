@@ -1,0 +1,13 @@
+[tool.poetry]
+name = "Sammaryhelper"
+version = "0.1.0"
+description = "Описание проекта"
+authors = ["TIP"]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+telethon = "^1.27.0"
+openai = "^1.0.0"
+pytz = "^2025.1"
+python-socks = "^2.4.0"
+asyncio = "^3.4.3"
