@@ -14,49 +14,14 @@ import threading
 from functools import partial
 import json
 
-def load_config(config_name):
-    """Загрузка конфигурационного файла"""
-    config_path = f"configs/{config_name}.py"
-    try:
-        if not os.path.exists(config_path):
-            raise FileNotFoundError(f"Файл конфига не найден: {config_path}")
-            
-        spec = importlib.util.spec_from_file_location("config", config_path)
-        if spec is None:
-            raise ImportError(f"Не удалось создать spec для: {config_path}")
-            
-        config = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(config)
-        return config
-    except Exception as e:
-        raise Exception(f"Ошибка загрузки конфига: {str(e)}")
-
-async def get_chat_messages(client: TelegramClient, chat_link: str, limit_hours: int = 24) -> List[str]:
-    """Получение сообщений из чата за последние limit_hours часов"""
-    messages = []
-    current_time = datetime.now(pytz.UTC)
-    time_limit = current_time - timedelta(hours=limit_hours)
-    
-    try:
-        entity = await client.get_entity(chat_link)
-        
-        async for message in client.iter_messages(entity, limit=None):
-            if message.date < time_limit:
-                break
-                
-            if message.text:
-                formatted_date = message.date.strftime("%Y-%m-%d %H:%M:%S UTC")
-                messages.append(f"{formatted_date}: {message.text}")
-    except Exception as e:
-        raise Exception(f"Ошибка при получении сообщений: {e}")
-    
-    return messages
-
 class TelegramSummarizerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Telegram Channel Summarizer")
         self.root.geometry("900x700")
+        
+        # Получаем путь к директории программы
+        self.app_dir = os.path.dirname(os.path.abspath(__file__))
         
         # Инициализация event loop
         self.loop = asyncio.new_event_loop()
@@ -99,6 +64,23 @@ class TelegramSummarizerGUI:
         # Добавляем обработчик изменения конфига
         self.config_combo.bind('<<ComboboxSelected>>', self.on_config_change)
     
+    def load_config(self, config_name):
+        """Загрузка конфигурационного файла"""
+        config_path = os.path.join(self.app_dir, "configs", f"{config_name}.py")
+        try:
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(f"Файл конфига не найден: {config_path}")
+            
+            spec = importlib.util.spec_from_file_location("config", config_path)
+            if spec is None:
+                raise ImportError(f"Не удалось создать spec для: {config_path}")
+            
+            config = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(config)
+            return config
+        except Exception as e:
+            raise Exception(f"Ошибка загрузки конфига: {str(e)}")
+
     def setup_main_tab(self):
         """Настройка основной вкладки"""
         # Конфигурация
@@ -228,8 +210,9 @@ class TelegramSummarizerGUI:
     
     def load_settings(self):
         """Загрузка настроек из файла"""
+        settings_path = os.path.join(self.app_dir, 'summarizer_settings.json')
         try:
-            with open('summarizer_settings.json', 'r', encoding='utf-8') as f:
+            with open(settings_path, 'r', encoding='utf-8') as f:
                 saved_settings = json.load(f)
                 self.settings.update(saved_settings)
                 
@@ -245,6 +228,7 @@ class TelegramSummarizerGUI:
     
     def save_settings(self):
         """Сохранение настроек в файл"""
+        settings_path = os.path.join(self.app_dir, 'summarizer_settings.json')
         try:
             # Обновляем настройки из интерфейса
             if hasattr(self, 'model_var'):
@@ -252,7 +236,7 @@ class TelegramSummarizerGUI:
             if hasattr(self, 'system_prompt'):
                 self.settings['system_prompt'] = self.system_prompt.get('1.0', tk.END).strip()
             
-            with open('summarizer_settings.json', 'w', encoding='utf-8') as f:
+            with open(settings_path, 'w', encoding='utf-8') as f:
                 json.dump(self.settings, f, ensure_ascii=False, indent=2)
             self.log("Настройки сохранены")
         except Exception as e:
@@ -261,7 +245,7 @@ class TelegramSummarizerGUI:
     def get_config_files(self):
         """Получение списка конфигурационных файлов"""
         configs = []
-        configs_dir = "configs"
+        configs_dir = os.path.join(self.app_dir, "configs")
         if not os.path.exists(configs_dir):
             os.makedirs(configs_dir)
             self.create_default_config()
@@ -280,6 +264,7 @@ class TelegramSummarizerGUI:
 
     def create_default_config(self):
         """Создание шаблона конфигурационного файла"""
+        config_path = os.path.join(self.app_dir, "configs", "config_template.py")
         config_template = """# Telegram API credentials
 api_id = 123456  # Замените на ваш api_id
 api_hash = 'your_api_hash_here'  # Замените на ваш api_hash
@@ -295,7 +280,7 @@ proxy_settings = {
 # OpenAI API key
 openai_api_key = 'your_openai_api_key_here'  # Замените на ваш ключ OpenAI
 """
-        with open("configs/config_template.py", "w", encoding="utf-8") as f:
+        with open(config_path, "w", encoding="utf-8") as f:
             f.write(config_template)
 
     def log(self, message):
@@ -319,13 +304,14 @@ openai_api_key = 'your_openai_api_key_here'  # Замените на ваш кл
                     await self.client.disconnect()
                 self.client = None
                 
-            config = load_config(config_name)
+            config = self.load_config(config_name)
             
             # Используем имя конфига как имя сессии
-            session_name = f"sessions/{config_name}"
+            sessions_dir = os.path.join(self.app_dir, "sessions")
+            session_name = os.path.join(sessions_dir, config_name)
             
             # Создаем директорию для сессий, если её нет
-            os.makedirs("sessions", exist_ok=True)
+            os.makedirs(sessions_dir, exist_ok=True)
             
             # Проверяем настройки прокси
             proxy_settings = None
@@ -464,7 +450,7 @@ openai_api_key = 'your_openai_api_key_here'  # Замените на ваш кл
                 
             # Генерируем саммари
             self.log("Генерация саммари...")
-            config = load_config(self.config_var.get())
+            config = self.load_config(self.config_var.get())
             openai_client = openai.AsyncOpenAI(api_key=config.openai_api_key)
             summary = await self.generate_summary(messages, openai_client)
             
