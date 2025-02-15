@@ -15,3 +15,5 @@ logs/
 # 
 .Sammaryhelper/configs
 .Sammaryhelper/sessions
+.vscode/
+.gitignore
