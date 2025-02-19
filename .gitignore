@@ -1,0 +1,20 @@
+# Виртуальное окружение
+venv/
+
+# Кэш Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Логи
+logs/
+*.log
+
+# Настройки среды
+.env
+# 
+Sammaryhelper/configs/
+Sammaryhelper/sessions/
+Sammaryhelper/summarizer_settings.json
+.vscode/
+.gitignore
