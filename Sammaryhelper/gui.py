@@ -51,6 +51,9 @@ class TelegramSummarizerGUI:
         saved_settings = load_settings(self.app_dir)
         self.settings.update(saved_settings)
         
+        # Устанавливаем состояние чекбокса "Дебаг"
+        self.debug_var = tk.BooleanVar(value=self.settings.get('debug', False))
+        
         self.setup_main_tab()
         self.setup_config_tab()  # Добавляем настройку новой вкладки
         self.setup_settings_tab()
@@ -92,7 +95,7 @@ class TelegramSummarizerGUI:
         ttk.Label(self.dialogs_filter_frame, text="Сортировка:").grid(row=0, column=2, padx=5, sticky=tk.W)
         self.dialog_sort_var = tk.StringVar(value="name")
         self.dialog_sort_combo = ttk.Combobox(self.dialogs_filter_frame, textvariable=self.dialog_sort_var, state="readonly")
-        self.dialog_sort_combo['values'] = ['name', 'type']
+        self.dialog_sort_combo['values'] = ['name', 'type', 'folder']
         self.dialog_sort_combo.grid(row=0, column=3, padx=5, sticky=tk.W)
         
         # Поле для ограничения количества диалогов
@@ -326,13 +329,43 @@ class TelegramSummarizerGUI:
         self.system_prompt.insert('1.0', self.settings['system_prompt'])
         
         # Дебаг
-        self.debug_var = tk.BooleanVar(value=self.settings.get('debug', False))
         ttk.Checkbutton(self.settings_frame, text="Дебаг", variable=self.debug_var).grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=5)
         
-        # Кнопка сохранения
-        self.save_btn = ttk.Button(self.settings_frame, text="Сохранить настройки", 
-                                 command=self.save_settings)
-        self.save_btn.grid(row=3, column=0, columnspan=2, pady=10)
+        # Добавляем разделитель
+        ttk.Separator(self.settings_frame, orient='horizontal').grid(row=4, column=0, columnspan=2, sticky='ew', pady=10)
+        
+        # Раздел версии клиента
+        ttk.Label(self.settings_frame, text="Версия клиента:", font=('', 10, 'bold')).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=(10,5))
+        
+        # System Version
+        ttk.Label(self.settings_frame, text="Версия системы:").grid(row=6, column=0, sticky=tk.W)
+        self.system_version_var = tk.StringVar(value=self.settings.get('system_version', 'Windows 10'))
+        self.system_version_combo = ttk.Combobox(self.settings_frame, textvariable=self.system_version_var)
+        self.system_version_combo['values'] = self.settings.get('system_versions', ['Windows 10', 'Android 13.0', 'iOS 16.5', 'macOS 13.4'])
+        self.system_version_combo.grid(row=6, column=1, sticky=(tk.W, tk.E), padx=5)
+        
+        # Device Model
+        ttk.Label(self.settings_frame, text="Модель устройства:").grid(row=7, column=0, sticky=tk.W)
+        self.device_model_var = tk.StringVar(value=self.settings.get('device_model', 'Desktop'))
+        self.device_model_combo = ttk.Combobox(self.settings_frame, textvariable=self.device_model_var)
+        self.device_model_combo['values'] = self.settings.get('device_models', ['Desktop', 'Samsung Galaxy S23', 'iPhone 14 Pro', 'MacBook Pro'])
+        self.device_model_combo.grid(row=7, column=1, sticky=(tk.W, tk.E), padx=5)
+        
+        # App Version
+        ttk.Label(self.settings_frame, text="Версия приложения:").grid(row=8, column=0, sticky=tk.W)
+        self.app_version_var = tk.StringVar(value=self.settings.get('app_version', '4.8.1'))
+        self.app_version_combo = ttk.Combobox(self.settings_frame, textvariable=self.app_version_var)
+        self.app_version_combo['values'] = self.settings.get('app_versions', ['4.8.1', '9.6.3', '9.7.0'])
+        self.app_version_combo.grid(row=8, column=1, sticky=(tk.W, tk.E), padx=5)
+        
+        # Кнопка применения версии клиента
+        self.apply_version_btn = ttk.Button(self.settings_frame, text="Применить версию", 
+                                          command=self.apply_client_version)
+        self.apply_version_btn.grid(row=9, column=0, columnspan=2, pady=10)
+        
+        # Кнопка сохранения настроек
+        self.save_settings_btn = ttk.Button(self.settings_frame, text="Сохранить настройки", command=self.save_settings)
+        self.save_settings_btn.grid(row=10, column=0, columnspan=2, sticky=tk.W, pady=5)
     
     def load_settings(self):
         """Загрузка настроек из файла"""
@@ -349,15 +382,24 @@ class TelegramSummarizerGUI:
     
     def save_settings(self):
         """Сохранение настроек в файл"""
-        if hasattr(self, 'model_var'):
+        try:
+            settings_path = os.path.join(self.app_dir, 'summarizer_settings.json')
+            self.log(f"Попытка сохранения настроек в {settings_path}")
+            
+            # Обновляем настройки перед сохранением
             self.settings['openai_model'] = self.model_var.get()
-        if hasattr(self, 'system_prompt'):
             self.settings['system_prompt'] = self.system_prompt.get('1.0', tk.END).strip()
-        if hasattr(self, 'debug_var'):
-            self.settings['debug'] = self.debug_var.get()
-        
-        save_settings(self.app_dir, self.settings)
-    
+            self.settings['debug'] = self.debug_var.get()  # Обновляем состояние чекбокса "Дебаг"
+            
+            self.log(f"Настройки перед сохранением: {self.settings}")
+            
+            with open(settings_path, 'w', encoding='utf-8') as f:
+                json.dump(self.settings, f, indent=2, ensure_ascii=False)
+            
+            self.log(f"Настройки сохранены: {self.settings}")
+        except Exception as e:
+            self.log(f"Ошибка при сохранении настроек: {e}")
+
     def run(self):
         """Запуск приложения"""
         def run_loop():
@@ -513,13 +555,11 @@ class TelegramSummarizerGUI:
         
         asyncio.run_coroutine_threadsafe(reconnect(), self.loop)
 
-    def log(self, message):
-        """Добавление сообщения в лог"""
-        if hasattr(self, 'log_text') and self.log_text.winfo_exists():
+    def log(self, message: str):
+        """Логирование сообщений"""
+        if self.debug_var.get():
             self.log_text.insert(tk.END, f"{message}\n")
             self.log_text.see(tk.END)
-        else:
-            print(message)  # Fallback для случая, когда лог еще не создан или уничтожен
 
     def cleanup(self):
         """Очистка ресурсов при закрытии приложения"""
@@ -572,7 +612,8 @@ class TelegramSummarizerGUI:
                 self.dialogs_tree.delete(*self.dialogs_tree.get_children())
                 
                 for dialog in self.dialogs:
-                    self.dialogs_tree.insert('', 'end', text=dialog['name'], values=(dialog['type'], '', dialog['id']))
+                    folder_name = f"Папка {dialog['folder_id']}" if dialog['folder_id'] is not None else "Без папки"
+                    self.dialogs_tree.insert('', 'end', text=dialog['name'], values=(dialog['type'], folder_name, dialog['id']))
                 
                 self.log(f"Диалоги загружены: {len(self.dialogs)}")
             except Exception as e:
@@ -593,17 +634,30 @@ class TelegramSummarizerGUI:
             search_filter = self.dialog_search_var.get().lower()
             sort_key = self.dialog_sort_var.get()
             
+            # Логируем полученные фильтры
+            self.log(f"Применение фильтра: поиск='{search_filter}', сортировка='{sort_key}'")
+            
             filtered_dialogs = [
                 dialog for dialog in self.dialogs
                 if search_filter in dialog['name'].lower()
             ]
             
-            filtered_dialogs.sort(key=lambda x: x[sort_key])
+            # Логируем список диалогов перед сортировкой
+            self.log(f"Диалоги перед сортировкой: {filtered_dialogs}")
+            
+            if sort_key == 'folder':
+                filtered_dialogs.sort(key=lambda x: x['folder_id'] if x['folder_id'] is not None else -1)
+            else:
+                filtered_dialogs.sort(key=lambda x: x[sort_key])
+            
+            # Логируем список диалогов после сортировки
+            self.log(f"Диалоги после сортировки: {filtered_dialogs}")
             
             self.dialogs_tree.delete(*self.dialogs_tree.get_children())
             
             for dialog in filtered_dialogs:
-                self.dialogs_tree.insert('', 'end', text=dialog['name'], values=(dialog['type'], '', dialog['id']))
+                folder_name = f"Папка {dialog['folder_id']}" if dialog['folder_id'] is not None else "Без папки"
+                self.dialogs_tree.insert('', 'end', text=dialog['name'], values=(dialog['type'], folder_name, dialog['id']))
             
             self.log(f"Диалоги отфильтрованы: {len(filtered_dialogs)}")
         except Exception as e:
@@ -724,6 +778,13 @@ openai_api_key = '{self.openai_key_var.get()}'
         
         async def run():
             try:
+                # Проверяем и инициализируем клиент, если необходимо
+                if not self.client_manager or not self.client_manager.client.is_connected():
+                    self.log("Клиент не подключен, инициализация...")
+                    if not await self.client_manager.init_client():
+                        self.log("Ошибка: клиент не инициализирован")
+                        return
+                
                 selected_items = self.dialogs_tree.selection()
                 if not selected_items:
                     self.log("Не выбран целевой чат")
@@ -878,12 +939,17 @@ openai_api_key = '{self.openai_key_var.get()}'
         """Загрузка состояния окна"""
         try:
             settings_path = os.path.join(self.app_dir, 'summarizer_settings.json')
+            self.log(f"Попытка загрузки состояния окна из {settings_path}")
+            
             with open(settings_path, 'r', encoding='utf-8') as f:
                 settings = json.load(f)
                 state = settings.get('window_state', {})
-                self.root.geometry(state.get('geometry', '900x700'))
+                if 'geometry' in state:
+                    self.root.geometry(state['geometry'])
+                    self.log(f"Состояние окна загружено: {state}")
+                else:
+                    self.log("Состояние окна не найдено, используются значения по умолчанию.")
                 self.root.update_idletasks()
-            self.log(f"Состояние окна загружено: {state}")
         except (FileNotFoundError, KeyError, json.JSONDecodeError) as e:
             self.log(f"Ошибка при загрузке состояния окна: {e}")
 
@@ -891,23 +957,69 @@ openai_api_key = '{self.openai_key_var.get()}'
         """Сохранение состояния окна"""
         try:
             settings_path = os.path.join(self.app_dir, 'summarizer_settings.json')
+            self.log(f"Попытка сохранения состояния окна в {settings_path}")
+            
             try:
                 with open(settings_path, 'r', encoding='utf-8') as f:
                     settings = json.load(f)
             except (FileNotFoundError, json.JSONDecodeError):
                 settings = {}
+                self.log("Создание нового файла настроек.")
+            
+            geometry = self.root.geometry()
+            self.log(f"Текущая геометрия окна: {geometry}")
             
             settings['window_state'] = {
-                'geometry': self.root.geometry()
+                'geometry': geometry
             }
             
             with open(settings_path, 'w', encoding='utf-8') as f:
                 json.dump(settings, f, indent=2, ensure_ascii=False)
+            
             self.log(f"Состояние окна сохранено: {settings['window_state']}")
         except Exception as e:
             self.log(f"Ошибка при сохранении состояния окна: {e}")
     
     def on_close(self):
         """Обработчик закрытия окна"""
-        self.save_window_state()
-        self.root.destroy() 
+        self.log("Закрытие окна")  # Логируем начало закрытия
+        self.save_settings()  # Сохраняем настройки перед закрытием
+        self.root.destroy()
+
+    def apply_client_version(self):
+        """Применение новой версии клиента"""
+        self.progress.start()
+        self.apply_version_btn.state(['disabled'])
+        
+        async def reconnect():
+            try:
+                # Отключаем старый клиент
+                if hasattr(self, 'client_manager') and self.client_manager is not None:
+                    if hasattr(self.client_manager, 'client') and self.client_manager.client is not None:
+                        if self.client_manager.client.is_connected():
+                            await self.client_manager.client.disconnect()
+                
+                # Создаем новый клиент с новыми параметрами
+                self.client_manager = TelegramClientManager({
+                    'config_name': self.config_var.get(),
+                    'app_dir': self.app_dir,
+                    'system_version': self.system_version_var.get(),
+                    'device_model': self.device_model_var.get(),
+                    'app_version': self.app_version_var.get()
+                })
+                
+                # Очищаем список диалогов
+                self.dialogs = []
+                self.dialogs_tree.delete(*self.dialogs_tree.get_children())
+                
+                # Пробуем инициализировать клиент
+                await self.client_manager.init_client()
+                self.log("Версия клиента успешно обновлена")
+                
+            except Exception as e:
+                self.log(f"Ошибка при обновлении версии клиента: {e}")
+            finally:
+                self.progress.stop()
+                self.apply_version_btn.state(['!disabled'])
+        
+        asyncio.run_coroutine_threadsafe(reconnect(), self.loop) 

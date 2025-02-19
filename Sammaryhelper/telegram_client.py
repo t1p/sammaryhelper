@@ -1,5 +1,6 @@
 from telethon import TelegramClient
 from telethon.tl.types import Channel, User
+from telethon.tl import functions
 import os
 from typing import List, Dict, Any
 
@@ -8,6 +9,11 @@ class TelegramClientManager:
         self.config = config
         self.client = None
         self.app_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Параметры версии клиента
+        self.system_version = config.get('system_version', 'Windows 10')
+        self.device_model = config.get('device_model', 'Desktop')
+        self.app_version = config.get('app_version', '4.8.1')
 
     async def init_client(self):
         """Инициализация клиента Telegram"""
@@ -42,12 +48,15 @@ class TelegramClientManager:
                     config.proxy_settings['proxy_port']
                 )
 
-            # Создаем клиент
+            # Создаем клиент с указанными параметрами версии
             self.client = TelegramClient(
                 session_name,
                 config.api_id,
                 config.api_hash,
-                proxy=proxy_settings
+                proxy=proxy_settings,
+                system_version=self.system_version,
+                device_model=self.device_model,
+                app_version=self.app_version
             )
 
             # Подключаемся
@@ -95,8 +104,14 @@ class TelegramClientManager:
             async for message in self.client.iter_messages(chat_id, search=filters.get('search'), limit=filters.get('limit')):
                 sender_name = "Неизвестно"
                 if message.sender_id:
-                    sender = await self.client.get_entity(message.sender_id)
-                    sender_name = getattr(sender, 'username', sender.first_name or 'Неизвестно')
+                    try:
+                        sender = await self.client.get_entity(message.sender_id)
+                        if isinstance(sender, User):
+                            sender_name = getattr(sender, 'username', sender.first_name or 'Неизвестно')
+                        elif isinstance(sender, Channel):
+                            sender_name = sender.title  # Используем название канала для Channel
+                    except Exception as e:
+                        self.log(f"Ошибка при получении отправителя: {e}")
                 
                 # Применяем фильтр по типу медиа
                 if filters.get('filter') == 'photo' and not message.photo:
@@ -131,13 +146,48 @@ class TelegramClientManager:
                     'id': dialog.id,
                     'name': dialog.name,
                     'type': dialog_type,
-                    'entity': dialog.entity
+                    'entity': dialog.entity,
+                    'folder_id': dialog.folder_id  # Используем folder_id
                 })
+            
+            # Логируем список диалогов перед сортировкой
+            print(f"Диалоги перед сортировкой: {dialogs}")
             
             # Сортировка
             sort_key = filters.get('sort', 'name')
-            dialogs.sort(key=lambda x: x[sort_key])
+            if sort_key == 'folder':
+                dialogs.sort(key=lambda x: x['folder_id'] if x['folder_id'] is not None else -1)
+            else:
+                dialogs.sort(key=lambda x: x[sort_key])
+            
+            # Логируем список диалогов после сортировки
+            print(f"Диалоги после сортировки: {dialogs}")
             
             return dialogs
         except Exception as e:
-            raise Exception(f"Ошибка при фильтрации диалогов: {e}") 
+            print(f"Ошибка при фильтрации диалогов: {e}")
+            raise Exception(f"Ошибка при фильтрации диалогов: {e}")
+
+    async def get_client_info(self):
+        """Получение информации о текущих параметрах клиента"""
+        if self.client and self.client.is_connected():
+            return {
+                "system_version": self.client.system_version,
+                "device_model": self.client.device_model,
+                "app_version": self.client.app_version,
+                "layer": self.client.session.layer,  # Версия MTProto
+                "dc_id": self.client.session.dc_id,  # ID дата-центра
+            }
+        return None
+
+    async def get_dialog_folders(self) -> Dict[int, str]:
+        """Получение папок и их содержимого"""
+        try:
+            folders = {}
+            result = await self.client(functions.messages.GetDialogFilters())
+            for folder in result:
+                for peer in folder.pinned_peers:
+                    folders[peer.channel_id] = folder.title
+            return folders
+        except Exception as e:
+            raise Exception(f"Ошибка при получении папок: {e}") 
