@@ -13,7 +13,8 @@ logs/
 # Настройки среды
 .env
 # 
-.Sammaryhelper/configs
-.Sammaryhelper/sessions
+Sammaryhelper/configs/
+Sammaryhelper/sessions/
+Sammaryhelper/summarizer_settings.json
 .vscode/
 .gitignore
