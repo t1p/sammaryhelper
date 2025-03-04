@@ -122,11 +122,17 @@ class TelegramClientManager:
     async def filter_messages(self, chat_id: int, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Фильтрация сообщений по заданным критериям"""
         try:
+            # Проверяем, что chat_id - это число
+            if not isinstance(chat_id, int):
+                raise ValueError(f"Некорректный ID диалога: {chat_id}")
+            
+            self.log(f"Фильтрация сообщений для диалога {chat_id} с фильтрами: {filters}")
+            
             # Проверяем, можно ли использовать кеш
             if self.use_cache and self.db_handler and not filters.get('force_refresh'):
                 # Получаем аккаунт ID
                 me = await self.client.get_me()
-                account_id = str(me.phone) if me.phone else me.username
+                account_id = str(me.phone) if me.phone else str(me.id)
                 
                 # Проверяем кеш
                 cached_messages = await self.db_handler.get_cached_messages(chat_id, account_id)
@@ -188,7 +194,7 @@ class TelegramClientManager:
             # Кешируем результаты, если используется кеширование
             if self.use_cache and self.db_handler:
                 me = await self.client.get_me()
-                account_id = str(me.phone) if me.phone else me.username
+                account_id = str(me.phone) if me.phone else str(me.id)
                 
                 # Создаем копию списка без объекта media, который нельзя сериализовать
                 messages_to_cache = []
@@ -202,6 +208,7 @@ class TelegramClientManager:
             
             return messages
         except Exception as e:
+            self.log(f"Ошибка при фильтрации сообщений: {e}")
             raise Exception(f"Ошибка при фильтрации сообщений: {e}")
 
     async def filter_dialogs(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:

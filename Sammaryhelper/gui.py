@@ -126,11 +126,12 @@ class TelegramSummarizerGUI:
         self.dialogs_tree.heading('type', text='Тип', command=lambda: self.treeview_sort_column(self.dialogs_tree, 'type', False))
         self.dialogs_tree.heading('folder', text='Папка', command=lambda: self.treeview_sort_column(self.dialogs_tree, 'folder', False))
         self.dialogs_tree.heading('unread', text='Непрочитано', command=lambda: self.treeview_sort_column(self.dialogs_tree, 'unread', False))
+        self.dialogs_tree.heading('id', text='ID')
         self.dialogs_tree.column('name', width=200)
         self.dialogs_tree.column('type', width=100)
         self.dialogs_tree.column('folder', width=100)
         self.dialogs_tree.column('unread', width=100)
-        self.dialogs_tree.column('id', width=0, stretch=False)
+        self.dialogs_tree.column('id', width=50)  # Сделаем ID видимым для отладки
         
         scrollbar = ttk.Scrollbar(self.dialogs_frame, orient=tk.VERTICAL, command=self.dialogs_tree.yview)
         self.dialogs_tree.configure(yscrollcommand=scrollbar.set)
@@ -138,21 +139,30 @@ class TelegramSummarizerGUI:
         self.dialogs_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Фильтры для сообщений
-        self.messages_filter_frame = ttk.Frame(self.main_frame)
+        # Добавляем обработчик выбора диалога
+        self.dialogs_tree.bind('<<TreeviewSelect>>', self.on_dialog_select)
+        
+        # Фрейм для фильтрации сообщений
+        self.messages_filter_frame = ttk.LabelFrame(self.main_frame, text="Сообщения")
         self.messages_filter_frame.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5, pady=5)
         
-        # Поле поиска для сообщений
-        ttk.Label(self.messages_filter_frame, text="Поиск сообщений:").grid(row=0, column=0, padx=5, sticky=tk.W)
-        self.search_var = tk.StringVar()
-        self.search_entry = ttk.Entry(self.messages_filter_frame, textvariable=self.search_var, width=20)
-        self.search_entry.grid(row=0, column=1, padx=5, sticky=tk.W)
+        # Поле для поиска сообщений
+        ttk.Label(self.messages_filter_frame, text="Поиск:").grid(row=0, column=0, padx=5, sticky=tk.W)
+        self.message_search_var = tk.StringVar()
+        self.message_search_entry = ttk.Entry(self.messages_filter_frame, textvariable=self.message_search_var)
+        self.message_search_entry.grid(row=0, column=1, padx=5, sticky=(tk.W, tk.E))
         
-        # Чекбоксы для типов сообщений
-        self.photo_var = tk.BooleanVar()
-        self.video_var = tk.BooleanVar()
-        ttk.Checkbutton(self.messages_filter_frame, text="Фото", variable=self.photo_var).grid(row=0, column=2, padx=5, sticky=tk.W)
-        ttk.Checkbutton(self.messages_filter_frame, text="Видео", variable=self.video_var).grid(row=0, column=3, padx=5, sticky=tk.W)
+        # Поле для ограничения количества сообщений
+        ttk.Label(self.messages_filter_frame, text="Макс. сообщений:").grid(row=1, column=0, padx=5, sticky=tk.W)
+        self.max_messages_var = tk.StringVar(value=self.settings.get('max_messages', '100'))
+        self.max_messages_entry = ttk.Entry(self.messages_filter_frame, textvariable=self.max_messages_var, width=5)
+        self.max_messages_entry.grid(row=1, column=1, padx=5, sticky=tk.W)
+        
+        # Фильтр по типу сообщений
+        ttk.Label(self.messages_filter_frame, text="Фильтр:").grid(row=0, column=2, padx=5, sticky=tk.W)
+        self.message_filter_var = tk.StringVar(value="all")
+        self.message_filter_combo = ttk.Combobox(self.messages_filter_frame, textvariable=self.message_filter_var, values=["all", "photo", "video"])
+        self.message_filter_combo.grid(row=0, column=3, padx=5, sticky=tk.W)
         
         # Выпадающее поле для сортировки сообщений
         ttk.Label(self.messages_filter_frame, text="Сортировка:").grid(row=1, column=0, padx=5, sticky=tk.W)
@@ -163,7 +173,6 @@ class TelegramSummarizerGUI:
         
         # Поле для ограничения количества сообщений
         ttk.Label(self.messages_filter_frame, text="Макс. сообщений:").grid(row=1, column=2, padx=5, sticky=tk.W)
-        self.max_messages_var = tk.StringVar(value=self.settings.get('max_messages', '100'))
         self.max_messages_entry = ttk.Entry(self.messages_filter_frame, textvariable=self.max_messages_var, width=5)
         self.max_messages_entry.grid(row=1, column=3, padx=5, sticky=tk.W)
         
@@ -444,7 +453,7 @@ class TelegramSummarizerGUI:
                     return
                     
                 selected_item = selected_items[0]
-                dialog_id = self.dialogs_tree.item(selected_item)['values'][2]
+                dialog_id = self.dialogs_tree.item(selected_item)['values'][4]
                 self.log(f"Получение участников для чата с ID: {dialog_id}")
                 
                 participants = await self.client_manager.get_chat_participants(dialog_id)
@@ -484,7 +493,7 @@ class TelegramSummarizerGUI:
                     return
                     
                 selected_item = selected_items[0]
-                dialog_id = self.dialogs_tree.item(selected_item)['values'][2]
+                dialog_id = self.dialogs_tree.item(selected_item)['values'][4]
                 
                 # Получаем фильтры от пользователя
                 filters = {
@@ -605,7 +614,8 @@ class TelegramSummarizerGUI:
                 if not self.client_manager:
                     self.client_manager = TelegramClientManager({
                         'config_name': self.config_var.get(),
-                        'app_dir': self.app_dir
+                        'app_dir': self.app_dir,
+                        'debug': self.debug_var.get()
                     })
                 
                 if not hasattr(self.client_manager, 'client') or not self.client_manager.client or not self.client_manager.client.is_connected():
@@ -626,12 +636,16 @@ class TelegramSummarizerGUI:
                 for dialog in self.dialogs:
                     folder_name = f"Папка {dialog['folder_id']}" if dialog['folder_id'] is not None else "Без папки"
                     unread_count = dialog.get('unread_count', 0)
+                    
+                    # Выводим отладочную информацию
+                    self.log(f"Добавление диалога: {dialog['name']}, ID: {dialog['id']}")
+                    
                     self.dialogs_tree.insert('', 'end', values=(
                         dialog['name'], 
                         dialog['type'], 
                         folder_name, 
                         unread_count,
-                        dialog['id']
+                        dialog['id']  # Важно: ID должен быть последним элементом
                     ))
                 
                 self.log(f"Диалоги загружены: {len(self.dialogs)}")
@@ -647,52 +661,41 @@ class TelegramSummarizerGUI:
 
     def apply_filter_to_loaded_dialogs(self):
         """Применение фильтра к уже загруженным диалогам"""
-        self.progress.start()
-        self.filter_dialogs_btn.state(['disabled'])
+        search_text = self.dialog_search_var.get().lower()
         
-        try:
-            # Получаем фильтры от пользователя
-            search_filter = self.dialog_search_var.get().lower()
-            sort_key = self.dialog_sort_var.get()
+        # Очищаем список диалогов
+        self.dialogs_tree.delete(*self.dialogs_tree.get_children())
+        
+        # Фильтруем диалоги
+        filtered_dialogs = []
+        for dialog in self.dialogs:
+            if search_text and search_text not in dialog['name'].lower():
+                continue
+            filtered_dialogs.append(dialog)
+        
+        # Сортируем диалоги
+        sort_by = self.dialog_sort_var.get()
+        if sort_by == 'name':
+            filtered_dialogs.sort(key=lambda d: d['name'])
+        elif sort_by == 'type':
+            filtered_dialogs.sort(key=lambda d: d['type'])
+        elif sort_by == 'folder':
+            filtered_dialogs.sort(key=lambda d: d.get('folder_id', 0) or 0)
+        
+        # Заполняем список диалогов
+        for dialog in filtered_dialogs:
+            folder_name = f"Папка {dialog['folder_id']}" if dialog['folder_id'] is not None else "Без папки"
+            unread_count = dialog.get('unread_count', 0)
             
-            # Логируем полученные фильтры
-            self.log(f"Применение фильтра: поиск='{search_filter}', сортировка='{sort_key}'")
-            
-            filtered_dialogs = [
-                dialog for dialog in self.dialogs
-                if search_filter in dialog['name'].lower()
-            ]
-            
-            # Логируем список диалогов перед сортировкой
-            self.log(f"Диалоги перед сортировкой: {filtered_dialogs}")
-            
-            if sort_key == 'folder':
-                filtered_dialogs.sort(key=lambda x: x['folder_id'] if x['folder_id'] is not None else -1)
-            else:
-                filtered_dialogs.sort(key=lambda x: x[sort_key])
-            
-            # Логируем список диалогов после сортировки
-            self.log(f"Диалоги после сортировки: {filtered_dialogs}")
-            
-            self.dialogs_tree.delete(*self.dialogs_tree.get_children())
-            
-            for dialog in filtered_dialogs:
-                folder_name = f"Папка {dialog['folder_id']}" if dialog['folder_id'] is not None else "Без папки"
-                unread_count = dialog.get('unread_count', 0)
-                self.dialogs_tree.insert('', 'end', values=(
-                    dialog['name'], 
-                    dialog['type'], 
-                    folder_name, 
-                    unread_count,
-                    dialog['id']
-                ))
-            
-            self.log(f"Диалоги отфильтрованы: {len(filtered_dialogs)}")
-        except Exception as e:
-            self.log(f"Ошибка при фильтрации диалогов: {e}")
-        finally:
-            self.progress.stop()
-            self.filter_dialogs_btn.state(['!disabled'])
+            self.dialogs_tree.insert('', 'end', values=(
+                dialog['name'], 
+                dialog['type'], 
+                folder_name, 
+                unread_count,
+                dialog['id']  # Важно: ID должен быть последним элементом
+            ))
+        
+        self.log(f"Диалоги отфильтрованы: {len(filtered_dialogs)}")
 
     def load_current_config(self):
         """Загрузка текущего конфига"""
@@ -825,14 +828,13 @@ openai_api_key = '{self.openai_key_var.get()}'
                     return
                     
                 selected_item = selected_items[0]
-                dialog_id = self.dialogs_tree.item(selected_item)['values'][2]
+                dialog_id = self.dialogs_tree.item(selected_item)['values'][4]
                 
                 # Получаем фильтры от пользователя
                 filters = {
-                    'search': self.search_var.get(),
+                    'search': self.message_search_var.get(),
                     'limit': int(self.max_messages_var.get()),
-                    'filter': 'photo' if self.photo_var.get() else 'video' if self.video_var.get() else None,
-                    'sort': self.sort_var.get()
+                    'filter': self.message_filter_var.get()
                 }
                 
                 self.messages = await self.client_manager.filter_messages(dialog_id, filters)
@@ -860,7 +862,7 @@ openai_api_key = '{self.openai_key_var.get()}'
         
         try:
             # Получаем фильтры от пользователя
-            search_filter = self.search_var.get().lower()
+            search_filter = self.message_search_var.get().lower()
             sort_key = self.sort_var.get()
             
             filtered_messages = [
@@ -1052,41 +1054,98 @@ openai_api_key = '{self.openai_key_var.get()}'
         # Меняем направление сортировки при следующем клике
         tv.heading(col, command=lambda: self.treeview_sort_column(tv, col, not reverse))
 
-    def on_config_change(self, event):
-        """Обработчик изменения конфига"""
+    def on_dialog_select(self, event):
+        """Обработчик выбора диалога"""
+        selected_items = self.dialogs_tree.selection()
+        if not selected_items:
+            return
+        
+        # Получаем ID выбранного диалога
+        item = selected_items[0]
+        values = self.dialogs_tree.item(item)['values']
+        
+        # Выводим отладочную информацию
+        self.log(f"Выбран диалог: {values}")
+        
+        # Проверяем, что values содержит достаточно элементов
+        if not values or len(values) < 5:
+            self.log(f"Ошибка: не удалось получить ID диалога из {values}")
+            return
+        
+        # ID находится в последней колонке
+        dialog_id = values[4]
+        
+        # Проверяем, что dialog_id - это число
+        try:
+            dialog_id = int(dialog_id)
+        except (ValueError, TypeError):
+            self.log(f"Ошибка: некорректный ID диалога: {dialog_id}")
+            return
+        
+        self.selected_dialog_id = dialog_id
+        self.selected_dialog_name = values[0]  # Название диалога
+        
+        # Обновляем заголовок фрейма сообщений
+        self.messages_filter_frame.configure(text=f"Сообщения: {self.selected_dialog_name}")
+        
+        # Очищаем список сообщений
+        self.messages_tree.delete(*self.messages_tree.get_children())
+        
+        # Загружаем сообщения для выбранного диалога
+        self.load_messages()
+
+    def load_messages(self):
+        """Загрузка сообщений для выбранного диалога"""
+        if not hasattr(self, 'selected_dialog_id') or self.selected_dialog_id is None:
+            self.log("Ошибка: не выбран диалог")
+            return
+        
+        self.log(f"Загрузка сообщений для диалога ID: {self.selected_dialog_id}")
+        
         self.progress.start()
-        config_name = self.config_var.get()
+        self.load_messages_btn.state(['disabled'])
         
-        # Сохраняем выбранный конфиг
-        self.settings['last_config'] = config_name
-        self.save_settings()
-        
-        async def reconnect():
+        async def run():
             try:
-                # Отключаем старый клиент
-                if hasattr(self, 'client_manager') and self.client_manager is not None:
-                    if hasattr(self.client_manager, 'client') and self.client_manager.client is not None:
-                        if self.client_manager.client.is_connected():
-                            await self.client_manager.client.disconnect()
+                # Проверяем, что клиент инициализирован
+                if not self.client_manager or not hasattr(self.client_manager, 'client') or not self.client_manager.client.is_connected():
+                    if not await self.client_manager.init_client():
+                        self.log("Ошибка: клиент не инициализирован")
+                        return
                 
-                # Создаем новый клиент
-                self.client_manager = TelegramClientManager({
-                    'config_name': config_name,
-                    'app_dir': self.app_dir,
-                    'debug': self.debug_var.get()
-                })
+                # Получаем фильтры от пользователя
+                filters = {
+                    'search': self.message_search_var.get(),
+                    'limit': int(self.max_messages_var.get()),
+                    'filter': self.message_filter_var.get()
+                }
                 
-                # Очищаем список диалогов
-                self.dialogs = []
-                self.dialogs_tree.delete(*self.dialogs_tree.get_children())
-                self.log(f"Выбран конфиг: {config_name}")
+                # Логируем запрос для отладки
+                self.log(f"Загрузка сообщений для диалога {self.selected_dialog_id} с фильтрами: {filters}")
                 
-                # Пробуем инициализировать клиент
-                await self.client_manager.init_client()
+                # Загружаем сообщения
+                messages = await self.client_manager.filter_messages(self.selected_dialog_id, filters)
                 
+                # Очищаем список сообщений
+                self.messages_tree.delete(*self.messages_tree.get_children())
+                
+                # Заполняем список сообщений
+                for message in messages:
+                    date_str = message['date'].strftime('%Y-%m-%d %H:%M:%S')
+                    self.messages_tree.insert('', 'end', values=(
+                        message['id'],
+                        message['sender_name'],
+                        message['text'][:100] + ('...' if len(message['text']) > 100 else ''),
+                        date_str
+                    ))
+                
+                self.log(f"Сообщения загружены: {len(messages)}")
             except Exception as e:
-                self.log(f"Ошибка при смене конфига: {e}")
+                self.log(f"Ошибка при загрузке сообщений: {e}")
+                import traceback
+                self.log(traceback.format_exc())
             finally:
                 self.progress.stop()
+                self.load_messages_btn.state(['!disabled'])
         
-        asyncio.run_coroutine_threadsafe(reconnect(), self.loop) 
+        asyncio.run_coroutine_threadsafe(run(), self.loop) 
