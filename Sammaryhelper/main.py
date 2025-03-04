@@ -6,8 +6,7 @@ if __name__ == "__main__":
     app = TelegramSummarizerGUI(root)
     
     def on_closing():
-        app.root.quit()
-        app.root.destroy()
+        app.on_close()
     
     root.protocol("WM_DELETE_WINDOW", on_closing)
     app.run()

@@ -84,7 +84,9 @@ def save_settings(app_dir: str, settings: Dict[str, Any]) -> None:
             'system_prompt': settings.get('system_prompt'),
             'last_config': settings.get('last_config'),
             'available_models': settings.get('available_models', []),
-            'debug': settings.get('debug', False)
+            'debug': settings.get('debug', False),
+            'max_dialogs': settings.get('max_dialogs', '100'),
+            'max_messages': settings.get('max_messages', '100')
         }
         
         with open(settings_path, 'w', encoding='utf-8') as f:

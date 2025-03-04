@@ -44,7 +44,9 @@ class TelegramSummarizerGUI:
                 'gpt-4',
                 'gpt-4-turbo-preview'
             ],
-            'last_config': None
+            'last_config': None,
+            'max_dialogs': '100',
+            'max_messages': '100'
         }
         
         # Загружаем сохраненные настройки
@@ -65,7 +67,8 @@ class TelegramSummarizerGUI:
         
         self.client_manager = TelegramClientManager({
             'config_name': config_name,
-            'app_dir': self.app_dir
+            'app_dir': self.app_dir,
+            'debug': self.debug_var.get()
         })
         self.ai_manager = AIChatManager(self.settings)
         self.dialogs = []
@@ -100,7 +103,7 @@ class TelegramSummarizerGUI:
         
         # Поле для ограничения количества диалогов
         ttk.Label(self.dialogs_filter_frame, text="Макс. диалогов:").grid(row=1, column=0, padx=5, sticky=tk.W)
-        self.max_dialogs_var = tk.StringVar(value="100")
+        self.max_dialogs_var = tk.StringVar(value=self.settings.get('max_dialogs', '100'))
         self.max_dialogs_entry = ttk.Entry(self.dialogs_filter_frame, textvariable=self.max_dialogs_var, width=5)
         self.max_dialogs_entry.grid(row=1, column=1, padx=5, sticky=tk.W)
         
@@ -118,11 +121,15 @@ class TelegramSummarizerGUI:
         self.dialogs_frame = ttk.Frame(self.main_frame)
         self.dialogs_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
         
-        self.dialogs_tree = ttk.Treeview(self.dialogs_frame, columns=('type', 'folder', 'id'), show='tree headings')
-        self.dialogs_tree.heading('type', text='Тип')
-        self.dialogs_tree.heading('folder', text='Папка')
+        self.dialogs_tree = ttk.Treeview(self.dialogs_frame, columns=('name', 'type', 'folder', 'unread', 'id'), show='headings')
+        self.dialogs_tree.heading('name', text='Название', command=lambda: self.treeview_sort_column(self.dialogs_tree, 'name', False))
+        self.dialogs_tree.heading('type', text='Тип', command=lambda: self.treeview_sort_column(self.dialogs_tree, 'type', False))
+        self.dialogs_tree.heading('folder', text='Папка', command=lambda: self.treeview_sort_column(self.dialogs_tree, 'folder', False))
+        self.dialogs_tree.heading('unread', text='Непрочитано', command=lambda: self.treeview_sort_column(self.dialogs_tree, 'unread', False))
+        self.dialogs_tree.column('name', width=200)
         self.dialogs_tree.column('type', width=100)
         self.dialogs_tree.column('folder', width=100)
+        self.dialogs_tree.column('unread', width=100)
         self.dialogs_tree.column('id', width=0, stretch=False)
         
         scrollbar = ttk.Scrollbar(self.dialogs_frame, orient=tk.VERTICAL, command=self.dialogs_tree.yview)
@@ -156,7 +163,7 @@ class TelegramSummarizerGUI:
         
         # Поле для ограничения количества сообщений
         ttk.Label(self.messages_filter_frame, text="Макс. сообщений:").grid(row=1, column=2, padx=5, sticky=tk.W)
-        self.max_messages_var = tk.StringVar(value="100")
+        self.max_messages_var = tk.StringVar(value=self.settings.get('max_messages', '100'))
         self.max_messages_entry = ttk.Entry(self.messages_filter_frame, textvariable=self.max_messages_var, width=5)
         self.max_messages_entry.grid(row=1, column=3, padx=5, sticky=tk.W)
         
@@ -175,10 +182,10 @@ class TelegramSummarizerGUI:
         self.messages_frame.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
         
         self.messages_tree = ttk.Treeview(self.messages_frame, columns=('id', 'sender', 'text', 'date'), show='headings')
-        self.messages_tree.heading('id', text='ID')
-        self.messages_tree.heading('sender', text='Отправитель')
-        self.messages_tree.heading('text', text='Сообщение')
-        self.messages_tree.heading('date', text='Дата и время')
+        self.messages_tree.heading('id', text='ID', command=lambda: self.treeview_sort_column(self.messages_tree, 'id', False))
+        self.messages_tree.heading('sender', text='Отправитель', command=lambda: self.treeview_sort_column(self.messages_tree, 'sender', False))
+        self.messages_tree.heading('text', text='Сообщение', command=lambda: self.treeview_sort_column(self.messages_tree, 'text', False))
+        self.messages_tree.heading('date', text='Дата и время', command=lambda: self.treeview_sort_column(self.messages_tree, 'date', False))
         self.messages_tree.column('id', width=50)
         self.messages_tree.column('sender', width=150)
         self.messages_tree.column('text', width=500)
@@ -537,7 +544,8 @@ class TelegramSummarizerGUI:
                 # Создаем новый клиент
                 self.client_manager = TelegramClientManager({
                     'config_name': config_name,
-                    'app_dir': self.app_dir
+                    'app_dir': self.app_dir,
+                    'debug': self.debug_var.get()
                 })
                 
                 # Очищаем список диалогов
@@ -555,9 +563,13 @@ class TelegramSummarizerGUI:
         
         asyncio.run_coroutine_threadsafe(reconnect(), self.loop)
 
-    def log(self, message: str):
+    def log(self, message):
         """Логирование сообщений"""
         if self.debug_var.get():
+            print(message)
+        
+        # Добавляем сообщение в лог-виджет, если он существует
+        if hasattr(self, 'log_text') and self.log_text:
             self.log_text.insert(tk.END, f"{message}\n")
             self.log_text.see(tk.END)
 
@@ -583,7 +595,7 @@ class TelegramSummarizerGUI:
                 print(f"Ошибка при очистке ресурсов: {e}")
 
     def load_filtered_dialogs(self):
-        """Загрузка диалогов с учетом текущего фильтра"""
+        """Загрузка и фильтрация диалогов"""
         self.progress.start()
         self.load_dialogs_btn.state(['disabled'])
         
@@ -596,7 +608,7 @@ class TelegramSummarizerGUI:
                         'app_dir': self.app_dir
                     })
                 
-                if not self.client_manager.client or not self.client_manager.client.is_connected():
+                if not hasattr(self.client_manager, 'client') or not self.client_manager.client or not self.client_manager.client.is_connected():
                     if not await self.client_manager.init_client():
                         self.log("Ошибка: клиент не инициализирован")
                         return
@@ -613,11 +625,20 @@ class TelegramSummarizerGUI:
                 
                 for dialog in self.dialogs:
                     folder_name = f"Папка {dialog['folder_id']}" if dialog['folder_id'] is not None else "Без папки"
-                    self.dialogs_tree.insert('', 'end', text=dialog['name'], values=(dialog['type'], folder_name, dialog['id']))
+                    unread_count = dialog.get('unread_count', 0)
+                    self.dialogs_tree.insert('', 'end', values=(
+                        dialog['name'], 
+                        dialog['type'], 
+                        folder_name, 
+                        unread_count,
+                        dialog['id']
+                    ))
                 
                 self.log(f"Диалоги загружены: {len(self.dialogs)}")
             except Exception as e:
                 self.log(f"Ошибка при загрузке диалогов: {e}")
+                import traceback
+                self.log(traceback.format_exc())
             finally:
                 self.progress.stop()
                 self.load_dialogs_btn.state(['!disabled'])
@@ -657,7 +678,14 @@ class TelegramSummarizerGUI:
             
             for dialog in filtered_dialogs:
                 folder_name = f"Папка {dialog['folder_id']}" if dialog['folder_id'] is not None else "Без папки"
-                self.dialogs_tree.insert('', 'end', text=dialog['name'], values=(dialog['type'], folder_name, dialog['id']))
+                unread_count = dialog.get('unread_count', 0)
+                self.dialogs_tree.insert('', 'end', values=(
+                    dialog['name'], 
+                    dialog['type'], 
+                    folder_name, 
+                    unread_count,
+                    dialog['id']
+                ))
             
             self.log(f"Диалоги отфильтрованы: {len(filtered_dialogs)}")
         except Exception as e:
@@ -743,7 +771,13 @@ openai_api_key = '{self.openai_key_var.get()}'
                 openai_client = openai.AsyncOpenAI(api_key=config.openai_api_key)
                 
                 # Собираем контекст из выбранных сообщений
-                selected_messages = [self.messages_tree.item(item)['values'][2] for item in self.messages_tree.selection()]
+                selected_messages = []
+                for item in self.messages_tree.selection():
+                    values = self.messages_tree.item(item)['values']
+                    if values and len(values) > 2:
+                        # Убедимся, что мы работаем со строками
+                        selected_messages.append(str(values[2]))
+                
                 context = "\n".join(selected_messages)
                 
                 # Отправляем запрос
@@ -898,43 +932,6 @@ openai_api_key = '{self.openai_key_var.get()}'
         
         asyncio.run_coroutine_threadsafe(run(), self.loop)
 
-    async def init_client(self):
-        """Инициализация клиента Telegram"""
-        try:
-            if hasattr(self, 'client') and self.client is not None:
-                if self.client.is_connected():
-                    await self.client.disconnect()
-                self.client = None
-
-            # Загружаем конфиг
-            config_path = os.path.join(self.app_dir, "configs", f"{self.config['config_name']}.py")
-            if not os.path.exists(config_path):
-                raise FileNotFoundError(f"Файл конфига не найден: {config_path}")
-
-            # Импортируем конфиг
-            import importlib.util
-            spec = importlib.util.spec_from_file_location("config", config_path)
-            config = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(config)
-
-            # Создаем клиент
-            self.client = TelegramClient(
-                session_name,
-                config.api_id,
-                config.api_hash
-            )
-
-            # Подключаемся
-            await self.client.connect()
-            if not await self.client.is_user_authorized():
-                await self.client.start()
-
-            return True
-
-        except Exception as e:
-            self.log(f"Ошибка при инициализации клиента: {str(e)}")
-            return False
-
     def load_window_state(self):
         """Загрузка состояния окна"""
         try:
@@ -983,7 +980,21 @@ openai_api_key = '{self.openai_key_var.get()}'
     def on_close(self):
         """Обработчик закрытия окна"""
         self.log("Закрытие окна")  # Логируем начало закрытия
-        self.save_settings()  # Сохраняем настройки перед закрытием
+        
+        # Обновляем настройки перед сохранением
+        self.settings['openai_model'] = self.model_var.get()
+        self.settings['system_prompt'] = self.system_prompt.get('1.0', tk.END).strip()
+        self.settings['debug'] = self.debug_var.get()
+        self.settings['max_dialogs'] = self.max_dialogs_var.get()
+        self.settings['max_messages'] = self.max_messages_var.get()
+        
+        # Сохраняем настройки
+        self.save_settings()
+        
+        # Сохраняем состояние окна
+        self.save_window_state()
+        
+        # Закрываем окно
         self.root.destroy()
 
     def apply_client_version(self):
@@ -1021,5 +1032,61 @@ openai_api_key = '{self.openai_key_var.get()}'
             finally:
                 self.progress.stop()
                 self.apply_version_btn.state(['!disabled'])
+        
+        asyncio.run_coroutine_threadsafe(reconnect(), self.loop)
+
+    def treeview_sort_column(self, tv, col, reverse):
+        """Сортировка колонки в Treeview"""
+        l = [(tv.set(k, col), k) for k in tv.get_children('')]
+        try:
+            # Пробуем сортировать как числа
+            l.sort(key=lambda t: int(t[0]), reverse=reverse)
+        except ValueError:
+            # Если не получилось, сортируем как строки
+            l.sort(reverse=reverse)
+        
+        # Переупорядочиваем элементы
+        for index, (val, k) in enumerate(l):
+            tv.move(k, '', index)
+        
+        # Меняем направление сортировки при следующем клике
+        tv.heading(col, command=lambda: self.treeview_sort_column(tv, col, not reverse))
+
+    def on_config_change(self, event):
+        """Обработчик изменения конфига"""
+        self.progress.start()
+        config_name = self.config_var.get()
+        
+        # Сохраняем выбранный конфиг
+        self.settings['last_config'] = config_name
+        self.save_settings()
+        
+        async def reconnect():
+            try:
+                # Отключаем старый клиент
+                if hasattr(self, 'client_manager') and self.client_manager is not None:
+                    if hasattr(self.client_manager, 'client') and self.client_manager.client is not None:
+                        if self.client_manager.client.is_connected():
+                            await self.client_manager.client.disconnect()
+                
+                # Создаем новый клиент
+                self.client_manager = TelegramClientManager({
+                    'config_name': config_name,
+                    'app_dir': self.app_dir,
+                    'debug': self.debug_var.get()
+                })
+                
+                # Очищаем список диалогов
+                self.dialogs = []
+                self.dialogs_tree.delete(*self.dialogs_tree.get_children())
+                self.log(f"Выбран конфиг: {config_name}")
+                
+                # Пробуем инициализировать клиент
+                await self.client_manager.init_client()
+                
+            except Exception as e:
+                self.log(f"Ошибка при смене конфига: {e}")
+            finally:
+                self.progress.stop()
         
         asyncio.run_coroutine_threadsafe(reconnect(), self.loop) 

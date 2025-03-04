@@ -3,6 +3,7 @@ from telethon.tl.types import Channel, User
 from telethon.tl import functions
 import os
 from typing import List, Dict, Any
+from .db_handler import DatabaseHandler
 
 class TelegramClientManager:
     def __init__(self, config):
@@ -14,6 +15,15 @@ class TelegramClientManager:
         self.system_version = config.get('system_version', 'Windows 10')
         self.device_model = config.get('device_model', 'Desktop')
         self.app_version = config.get('app_version', '4.8.1')
+        
+        # Инициализация обработчика базы данных
+        self.db_handler = None
+        self.use_cache = config.get('use_cache', True)
+        
+    def log(self, message):
+        """Логирование сообщений"""
+        if self.config.get('debug', False):
+            print(message)  # Выводим в консоль только если включен режим отладки
 
     async def init_client(self):
         """Инициализация клиента Telegram"""
@@ -63,6 +73,18 @@ class TelegramClientManager:
             await self.client.connect()
             if not await self.client.is_user_authorized():
                 await self.client.start()
+                
+            # Инициализируем обработчик базы данных, если используется кеширование
+            if self.use_cache:
+                try:
+                    self.db_handler = DatabaseHandler(debug=self.config.get('debug', False))
+                    db_connected = await self.db_handler.init_connection()
+                    if not db_connected:
+                        self.log("Не удалось подключиться к базе данных. Кеширование отключено.")
+                        self.use_cache = False
+                except Exception as e:
+                    self.log(f"Ошибка при инициализации базы данных: {e}")
+                    self.use_cache = False
 
             return True
 
@@ -100,6 +122,39 @@ class TelegramClientManager:
     async def filter_messages(self, chat_id: int, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Фильтрация сообщений по заданным критериям"""
         try:
+            # Проверяем, можно ли использовать кеш
+            if self.use_cache and self.db_handler and not filters.get('force_refresh'):
+                # Получаем аккаунт ID
+                me = await self.client.get_me()
+                account_id = str(me.phone) if me.phone else me.username
+                
+                # Проверяем кеш
+                cached_messages = await self.db_handler.get_cached_messages(chat_id, account_id)
+                if cached_messages:
+                    self.log(f"Используем кешированные сообщения ({len(cached_messages)})")
+                    
+                    # Применяем фильтры к кешированным данным
+                    filtered_messages = []
+                    for message in cached_messages:
+                        # Применяем фильтр по тексту
+                        if filters.get('search') and filters['search'].lower() not in message.get('text', '').lower():
+                            continue
+                        
+                        # Применяем фильтр по типу медиа
+                        if filters.get('filter') == 'photo' and not message.get('photo'):
+                            continue
+                        if filters.get('filter') == 'video' and not message.get('video'):
+                            continue
+                        
+                        filtered_messages.append(message)
+                    
+                    # Ограничиваем количество сообщений
+                    if filters.get('limit'):
+                        filtered_messages = filtered_messages[:filters.get('limit')]
+                    
+                    return filtered_messages
+            
+            # Если кеш не используется или данных в кеше нет, получаем данные из Telegram
             messages = []
             async for message in self.client.iter_messages(chat_id, search=filters.get('search'), limit=filters.get('limit')):
                 sender_name = "Неизвестно"
@@ -125,8 +180,26 @@ class TelegramClientManager:
                     'date': message.date,
                     'sender_id': message.sender_id,
                     'sender_name': sender_name,
-                    'media': message.media
+                    'media': message.media,
+                    'photo': bool(message.photo),
+                    'video': bool(message.video)
                 })
+            
+            # Кешируем результаты, если используется кеширование
+            if self.use_cache and self.db_handler:
+                me = await self.client.get_me()
+                account_id = str(me.phone) if me.phone else me.username
+                
+                # Создаем копию списка без объекта media, который нельзя сериализовать
+                messages_to_cache = []
+                for message in messages:
+                    message_copy = message.copy()
+                    if 'media' in message_copy:
+                        del message_copy['media']
+                    messages_to_cache.append(message_copy)
+                
+                await self.db_handler.cache_messages(messages_to_cache, chat_id, account_id)
+            
             return messages
         except Exception as e:
             raise Exception(f"Ошибка при фильтрации сообщений: {e}")
@@ -134,6 +207,35 @@ class TelegramClientManager:
     async def filter_dialogs(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Фильтрация диалогов по заданным критериям"""
         try:
+            # Проверяем, можно ли использовать кеш
+            if self.use_cache and self.db_handler:
+                # Получаем аккаунт ID (используем номер телефона или имя пользователя)
+                me = await self.client.get_me()
+                account_id = str(me.phone) if me.phone else me.username
+                
+                # Проверяем кеш
+                cached_dialogs = await self.db_handler.get_cached_dialogs(account_id)
+                if cached_dialogs and not filters.get('force_refresh'):
+                    self.log(f"Используем кешированные диалоги ({len(cached_dialogs)})")
+                    
+                    # Применяем фильтры к кешированным данным
+                    filtered_dialogs = []
+                    for dialog in cached_dialogs:
+                        # Применяем фильтр по имени
+                        if filters.get('search') and filters['search'].lower() not in dialog['name'].lower():
+                            continue
+                        filtered_dialogs.append(dialog)
+                    
+                    # Сортировка
+                    sort_key = filters.get('sort', 'name')
+                    if sort_key == 'folder':
+                        filtered_dialogs.sort(key=lambda x: x['folder_id'] if x['folder_id'] is not None else -1)
+                    else:
+                        filtered_dialogs.sort(key=lambda x: x[sort_key])
+                    
+                    return filtered_dialogs
+            
+            # Если кеш не используется или данных в кеше нет, получаем данные из Telegram
             dialogs = []
             async for dialog in self.client.iter_dialogs(limit=filters.get('limit')):
                 dialog_type = "Канал" if isinstance(dialog.entity, Channel) else "Чат" if dialog.is_group else "Личка"
@@ -147,11 +249,9 @@ class TelegramClientManager:
                     'name': dialog.name,
                     'type': dialog_type,
                     'entity': dialog.entity,
-                    'folder_id': dialog.folder_id  # Используем folder_id
+                    'folder_id': dialog.folder_id,  # Используем folder_id
+                    'unread_count': dialog.unread_count  # Добавляем количество непрочитанных сообщений
                 })
-            
-            # Логируем список диалогов перед сортировкой
-            print(f"Диалоги перед сортировкой: {dialogs}")
             
             # Сортировка
             sort_key = filters.get('sort', 'name')
@@ -160,12 +260,24 @@ class TelegramClientManager:
             else:
                 dialogs.sort(key=lambda x: x[sort_key])
             
-            # Логируем список диалогов после сортировки
-            print(f"Диалоги после сортировки: {dialogs}")
+            # Кешируем результаты, если используется кеширование
+            if self.use_cache and self.db_handler:
+                me = await self.client.get_me()
+                account_id = str(me.phone) if me.phone else me.username
+                
+                # Создаем копию списка без объекта entity, который нельзя сериализовать
+                dialogs_to_cache = []
+                for dialog in dialogs:
+                    dialog_copy = dialog.copy()
+                    if 'entity' in dialog_copy:
+                        del dialog_copy['entity']
+                    dialogs_to_cache.append(dialog_copy)
+                
+                await self.db_handler.cache_dialogs(dialogs_to_cache, account_id)
             
             return dialogs
         except Exception as e:
-            print(f"Ошибка при фильтрации диалогов: {e}")
+            self.log(f"Ошибка при фильтрации диалогов: {e}")
             raise Exception(f"Ошибка при фильтрации диалогов: {e}")
 
     async def get_client_info(self):
@@ -190,4 +302,12 @@ class TelegramClientManager:
                     folders[peer.channel_id] = folder.title
             return folders
         except Exception as e:
-            raise Exception(f"Ошибка при получении папок: {e}") 
+            raise Exception(f"Ошибка при получении папок: {e}")
+
+    async def close(self):
+        """Закрытие подключений"""
+        if self.client and self.client.is_connected():
+            await self.client.disconnect()
+        
+        if self.db_handler:
+            await self.db_handler.close() 
