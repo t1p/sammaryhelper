@@ -4,6 +4,45 @@ from typing import List, Dict, Any
 class AIChatManager:
     def __init__(self, settings):
         self.settings = settings
+        self.openai_client = None
+
+    async def get_response(self, user_query, context=""):
+        """Получение ответа от модели ИИ на запрос пользователя
+        
+        Args:
+            user_query: Запрос пользователя
+            context: Контекст сообщений для анализа
+        
+        Returns:
+            str: Ответ от модели ИИ
+        """
+        try:
+            # Инициализируем клиент OpenAI при необходимости
+            if self.openai_client is None:
+                self.openai_client = openai.AsyncOpenAI(api_key=self.settings.get('openai_api_key'))
+            
+            # Получаем выбранную модель и системный промпт из настроек
+            model = self.settings.get('openai_model', 'gpt-3.5-turbo')
+            system_prompt = self.settings.get('system_prompt', 'Ты - помощник, который помагает анализировать чаты и сообщения')
+            
+            # Формируем запрос к API
+            response = await self.openai_client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Контекст сообщений:\n{context}\n\nЗапрос: {user_query}"}
+                ]
+            )
+            
+            # Извлекаем ответ
+            ai_response = response.choices[0].message.content
+            return ai_response
+            
+        except Exception as e:
+            print(f"Ошибка при получении ответа от ИИ: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return f"Произошла ошибка при обработке запроса: {str(e)}"
 
     async def generate_summary(self, messages: List[str], openai_client) -> str:
         """Генерация саммари"""

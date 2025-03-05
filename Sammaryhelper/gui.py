@@ -19,6 +19,9 @@ class TelegramSummarizerGUI:
         self.root.title("Telegram Channel Summarizer")
         self.root.geometry("900x700")
         
+        # Настройка стиля приложения
+        self.setup_styles()
+        
         self.app_dir = os.path.dirname(os.path.abspath(__file__))
         self.loop = asyncio.new_event_loop()
         self.running = True
@@ -82,11 +85,49 @@ class TelegramSummarizerGUI:
         # Привязываем событие закрытия окна
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
     
+    def setup_styles(self):
+        """Настройка стилей для улучшения внешнего вида"""
+        style = ttk.Style()
+        
+        # Основной стиль приложения
+        style.configure('TFrame', background='#f0f0f0')
+        style.configure('TLabel', background='#f0f0f0', font=('Arial', 10))
+        style.configure('TButton', font=('Arial', 10))
+        
+        # Стиль для LabelFrame с выраженной рамкой
+        style.configure('TLabelframe', background='#f0f0f0', borderwidth=2)
+        style.configure('TLabelframe.Label', font=('Arial', 11, 'bold'), background='#f0f0f0')
+        
+        # Стиль для PanedWindow
+        style.configure('TPanedwindow', background='#e0e0e0', sashwidth=5)
+        
+        # Стиль для Treeview
+        style.configure('Treeview', background='#ffffff', font=('Arial', 10))
+        style.configure('Treeview.Heading', font=('Arial', 10, 'bold'))
+    
     def setup_main_tab(self):
         """Настройка основной вкладки"""
-        # Фильтры для диалогов
-        self.dialogs_filter_frame = ttk.Frame(self.main_frame)
-        self.dialogs_filter_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
+        # Создаем основной PanedWindow для разделения интерфейса на части
+        self.main_paned = ttk.PanedWindow(self.main_frame, orient=tk.HORIZONTAL)
+        self.main_paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Левая панель для диалогов - используем LabelFrame вместо Frame
+        self.dialogs_container = ttk.LabelFrame(self.main_paned, text="Диалоги")
+        self.main_paned.add(self.dialogs_container, weight=1)
+        
+        # Правая панель для сообщений - используем LabelFrame вместо Frame
+        self.messages_container = ttk.LabelFrame(self.main_paned, text="Содержимое")
+        self.main_paned.add(self.messages_container, weight=2)
+        
+        # Вертикальный PanedWindow для разделения интерфейса сообщений и чата
+        self.msg_paned = ttk.PanedWindow(self.messages_container, orient=tk.VERTICAL)
+        self.msg_paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # === НАСТРОЙКА СЕКЦИИ ДИАЛОГОВ ===
+        
+        # Фильтры для диалогов - делаем LabelFrame для выделения секции фильтров
+        self.dialogs_filter_frame = ttk.LabelFrame(self.dialogs_container, text="Фильтры диалогов")
+        self.dialogs_filter_frame.pack(fill=tk.X, padx=5, pady=5)
         
         # Поле поиска для диалогов
         ttk.Label(self.dialogs_filter_frame, text="Поиск диалогов:").grid(row=0, column=0, padx=5, sticky=tk.W)
@@ -107,19 +148,24 @@ class TelegramSummarizerGUI:
         self.max_dialogs_entry = ttk.Entry(self.dialogs_filter_frame, textvariable=self.max_dialogs_var, width=5)
         self.max_dialogs_entry.grid(row=1, column=1, padx=5, sticky=tk.W)
         
-        # Кнопка для загрузки диалогов
-        self.load_dialogs_btn = ttk.Button(self.dialogs_filter_frame, text="Диалоги", 
-                                           command=self.load_filtered_dialogs)
-        self.load_dialogs_btn.grid(row=1, column=2, padx=5, sticky=tk.W)
+        # Кнопки в том же фрейме фильтрации диалогов
+        self.load_dialogs_btn = ttk.Button(
+            self.dialogs_filter_frame, 
+            text="Загрузить диалоги", 
+            command=self.load_filtered_dialogs
+        )
+        self.load_dialogs_btn.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
         
-        # Кнопка для фильтрации диалогов
-        self.filter_dialogs_btn = ttk.Button(self.dialogs_filter_frame, text="Фильтровать", 
-                                             command=self.apply_filter_to_loaded_dialogs)
-        self.filter_dialogs_btn.grid(row=1, column=3, padx=5, sticky=tk.W)
+        self.update_cache_btn = ttk.Button(
+            self.dialogs_filter_frame,
+            text="Обновить кеш",
+            command=self.update_dialogs_cache
+        )
+        self.update_cache_btn.grid(row=2, column=2, columnspan=2, padx=5, pady=5, sticky=tk.W)
         
-        # Список диалогов (Treeview)
-        self.dialogs_frame = ttk.Frame(self.main_frame)
-        self.dialogs_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
+        # Список диалогов - делаем LabelFrame для выделения списка
+        self.dialogs_frame = ttk.LabelFrame(self.dialogs_container, text="Список диалогов")
+        self.dialogs_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         self.dialogs_tree = ttk.Treeview(self.dialogs_frame, columns=('name', 'type', 'folder', 'unread', 'id'), show='headings')
         self.dialogs_tree.heading('name', text='Название', command=lambda: self.treeview_sort_column(self.dialogs_tree, 'name', False))
@@ -131,7 +177,7 @@ class TelegramSummarizerGUI:
         self.dialogs_tree.column('type', width=100)
         self.dialogs_tree.column('folder', width=100)
         self.dialogs_tree.column('unread', width=100)
-        self.dialogs_tree.column('id', width=50)  # Сделаем ID видимым для отладки
+        self.dialogs_tree.column('id', width=50)
         
         scrollbar = ttk.Scrollbar(self.dialogs_frame, orient=tk.VERTICAL, command=self.dialogs_tree.yview)
         self.dialogs_tree.configure(yscrollcommand=scrollbar.set)
@@ -142,9 +188,15 @@ class TelegramSummarizerGUI:
         # Добавляем обработчик выбора диалога
         self.dialogs_tree.bind('<<TreeviewSelect>>', self.on_dialog_select)
         
-        # Фрейм для фильтрации сообщений
-        self.messages_filter_frame = ttk.LabelFrame(self.main_frame, text="Сообщения")
-        self.messages_filter_frame.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5, pady=5)
+        # === НАСТРОЙКА СЕКЦИИ СООБЩЕНИЙ ===
+        
+        # Верхняя панель для списка сообщений
+        self.messages_top_frame = ttk.Frame(self.msg_paned)
+        self.msg_paned.add(self.messages_top_frame, weight=2)
+        
+        # Фрейм для фильтрации сообщений с явным заголовком
+        self.messages_filter_frame = ttk.LabelFrame(self.messages_top_frame, text="Фильтры сообщений")
+        self.messages_filter_frame.pack(fill=tk.X, padx=5, pady=5)
         
         # Поле для поиска сообщений
         ttk.Label(self.messages_filter_frame, text="Поиск:").grid(row=0, column=0, padx=5, sticky=tk.W)
@@ -152,52 +204,47 @@ class TelegramSummarizerGUI:
         self.message_search_entry = ttk.Entry(self.messages_filter_frame, textvariable=self.message_search_var)
         self.message_search_entry.grid(row=0, column=1, padx=5, sticky=(tk.W, tk.E))
         
-        # Поле для ограничения количества сообщений
-        ttk.Label(self.messages_filter_frame, text="Макс. сообщений:").grid(row=1, column=0, padx=5, sticky=tk.W)
-        self.max_messages_var = tk.StringVar(value=self.settings.get('max_messages', '100'))
-        self.max_messages_entry = ttk.Entry(self.messages_filter_frame, textvariable=self.max_messages_var, width=5)
-        self.max_messages_entry.grid(row=1, column=1, padx=5, sticky=tk.W)
-        
-        # Фильтр по типу сообщений
+        # Выпадающий список для фильтрации по типу медиа
         ttk.Label(self.messages_filter_frame, text="Фильтр:").grid(row=0, column=2, padx=5, sticky=tk.W)
         self.message_filter_var = tk.StringVar(value="all")
-        self.message_filter_combo = ttk.Combobox(self.messages_filter_frame, textvariable=self.message_filter_var, values=["all", "photo", "video"])
+        self.message_filter_combo = ttk.Combobox(self.messages_filter_frame, textvariable=self.message_filter_var, state="readonly")
+        self.message_filter_combo['values'] = ['all', 'photo', 'video']
         self.message_filter_combo.grid(row=0, column=3, padx=5, sticky=tk.W)
         
-        # Выпадающее поле для сортировки сообщений
+        # Выпадающий список для сортировки сообщений
         ttk.Label(self.messages_filter_frame, text="Сортировка:").grid(row=1, column=0, padx=5, sticky=tk.W)
-        self.sort_var = tk.StringVar(value="date")
-        self.sort_combo = ttk.Combobox(self.messages_filter_frame, textvariable=self.sort_var, state="readonly")
-        self.sort_combo['values'] = ['date', 'sender', 'text']
-        self.sort_combo.grid(row=1, column=1, padx=5, sticky=tk.W)
+        self.message_sort_var = tk.StringVar(value="date")
+        self.message_sort_combo = ttk.Combobox(self.messages_filter_frame, textvariable=self.message_sort_var, state="readonly")
+        self.message_sort_combo['values'] = ['date', 'sender']
+        self.message_sort_combo.grid(row=1, column=1, padx=5, sticky=tk.W)
         
         # Поле для ограничения количества сообщений
         ttk.Label(self.messages_filter_frame, text="Макс. сообщений:").grid(row=1, column=2, padx=5, sticky=tk.W)
+        self.max_messages_var = tk.StringVar(value=self.settings.get('max_messages', '100'))
         self.max_messages_entry = ttk.Entry(self.messages_filter_frame, textvariable=self.max_messages_var, width=5)
         self.max_messages_entry.grid(row=1, column=3, padx=5, sticky=tk.W)
         
         # Кнопка для загрузки сообщений
-        self.load_messages_btn = ttk.Button(self.messages_filter_frame, text="Сообщения", 
-                                            command=self.load_filtered_messages)
-        self.load_messages_btn.grid(row=1, column=4, padx=5, sticky=tk.W)
+        self.load_messages_btn = ttk.Button(self.messages_filter_frame, text="Сообщения", command=self.load_messages)
+        self.load_messages_btn.grid(row=2, column=0, columnspan=4, padx=5, pady=5, sticky=tk.W)
         
-        # Кнопка для фильтрации сообщений
-        self.filter_messages_btn = ttk.Button(self.messages_filter_frame, text="Фильтровать", 
-                                              command=self.apply_filter_to_loaded_messages)
-        self.filter_messages_btn.grid(row=1, column=5, padx=5, sticky=tk.W)
+        # Создаем PanedWindow для списка сообщений и просмотра текста
+        self.messages_content_paned = ttk.PanedWindow(self.messages_top_frame, orient=tk.VERTICAL)
+        self.messages_content_paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Список сообщений (Treeview)
-        self.messages_frame = ttk.Frame(self.main_frame)
-        self.messages_frame.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
+        # Фрейм для списка сообщений с заголовком
+        self.messages_frame = ttk.LabelFrame(self.messages_content_paned, text="Список сообщений")
+        self.messages_content_paned.add(self.messages_frame, weight=2)
         
+        # Treeview для отображения сообщений
         self.messages_tree = ttk.Treeview(self.messages_frame, columns=('id', 'sender', 'text', 'date'), show='headings')
         self.messages_tree.heading('id', text='ID', command=lambda: self.treeview_sort_column(self.messages_tree, 'id', False))
         self.messages_tree.heading('sender', text='Отправитель', command=lambda: self.treeview_sort_column(self.messages_tree, 'sender', False))
         self.messages_tree.heading('text', text='Сообщение', command=lambda: self.treeview_sort_column(self.messages_tree, 'text', False))
-        self.messages_tree.heading('date', text='Дата и время', command=lambda: self.treeview_sort_column(self.messages_tree, 'date', False))
+        self.messages_tree.heading('date', text='Дата', command=lambda: self.treeview_sort_column(self.messages_tree, 'date', False))
         self.messages_tree.column('id', width=50)
         self.messages_tree.column('sender', width=150)
-        self.messages_tree.column('text', width=500)
+        self.messages_tree.column('text', width=400)
         self.messages_tree.column('date', width=150)
         
         scrollbar = ttk.Scrollbar(self.messages_frame, orient=tk.VERTICAL, command=self.messages_tree.yview)
@@ -206,71 +253,82 @@ class TelegramSummarizerGUI:
         self.messages_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Поле для отображения полного текста сообщения
-        self.full_message_text = scrolledtext.ScrolledText(self.main_frame, height=5, wrap=tk.WORD)
-        self.full_message_text.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
+        # Добавляем обработчик выбора сообщения
+        self.messages_tree.bind('<<TreeviewSelect>>', self.on_message_select)
         
-        # Чат с ИИ
-        chat_frame = ttk.LabelFrame(self.main_frame, text="Чат с ИИ", padding="5")
-        chat_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
+        # Добавляем фрейм для просмотра полного текста сообщения в PanedWindow
+        self.message_view_frame = ttk.LabelFrame(self.messages_content_paned, text="Текст сообщения")
+        self.messages_content_paned.add(self.message_view_frame, weight=1)
         
-        # История чата
-        self.chat_history = scrolledtext.ScrolledText(chat_frame, height=10, wrap=tk.WORD)
-        self.chat_history.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Текстовое поле для отображения полного сообщения
+        self.message_view = scrolledtext.ScrolledText(self.message_view_frame, wrap=tk.WORD, height=5)
+        self.message_view.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Фрейм для ввода сообщения
-        input_frame = ttk.Frame(chat_frame)
-        input_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Нижняя панель для чата с ИИ и логов
+        self.bottom_frame = ttk.Frame(self.msg_paned)
+        self.msg_paned.add(self.bottom_frame, weight=1)
         
-        # Поле ввода
-        self.message_var = tk.StringVar()
-        self.message_entry = ttk.Entry(input_frame, textvariable=self.message_var)
-        self.message_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        # Добавляем стилизацию для PanedWindow
+        style = ttk.Style()
+        style.configure('TPanedwindow', background='#eeeeee')
         
-        # Кнопка отправки
-        self.send_btn = ttk.Button(input_frame, text="Отправить", command=self.send_message)
-        self.send_btn.pack(side=tk.RIGHT)
+        # Улучшаем отображение разделителей
+        style.configure('Sash', sashthickness=5, gripcount=5)
         
-        # Привязка Enter к отправке сообщения
-        self.message_entry.bind('<Return>', lambda e: self.send_message())
+        # Дополнительный горизонтальный PanedWindow для нижней части
+        self.bottom_paned = ttk.PanedWindow(self.bottom_frame, orient=tk.HORIZONTAL)
+        self.bottom_paned.pack(fill=tk.BOTH, expand=True)
         
-        # Лог
-        log_frame = ttk.LabelFrame(self.main_frame, text="Лог", padding="5")
-        log_frame.grid(row=3, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
+        # Фрейм для чата с ИИ (левая часть нижней панели)
+        self.ai_chat_frame = ttk.LabelFrame(self.bottom_paned, text="Чат с ИИ")
+        self.bottom_paned.add(self.ai_chat_frame, weight=1)
         
-        self.log_text = tk.Text(log_frame, height=10, wrap=tk.WORD)
+        # Создаем вертикальный PanedWindow для истории чата и поля ввода
+        self.ai_chat_paned = ttk.PanedWindow(self.ai_chat_frame, orient=tk.VERTICAL)
+        self.ai_chat_paned.pack(fill=tk.BOTH, expand=True)
+        
+        # Текстовое поле для чата с ИИ
+        self.ai_chat = scrolledtext.ScrolledText(self.ai_chat_paned, wrap=tk.WORD)
+        self.ai_chat_paned.add(self.ai_chat, weight=4)
+        
+        # Фрейм для поля ввода и кнопки
+        self.ai_input_frame = ttk.Frame(self.ai_chat_paned)
+        self.ai_chat_paned.add(self.ai_input_frame, weight=1)
+        
+        # Поле для ввода запроса к ИИ
+        self.ai_input = ttk.Entry(self.ai_input_frame)
+        self.ai_input.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
+        
+        # Кнопка для отправки запроса
+        self.send_to_ai_btn = ttk.Button(self.ai_input_frame, text="Отправить", command=self.send_to_ai)
+        self.send_to_ai_btn.pack(side=tk.RIGHT, padx=5, pady=5)
+        
+        # Фрейм для логов (правая часть нижней панели)
+        self.log_frame = ttk.LabelFrame(self.bottom_paned, text="Лог")
+        self.bottom_paned.add(self.log_frame, weight=1)
+        
+        # Текстовое поле для логов
+        self.log_text = scrolledtext.ScrolledText(self.log_frame, wrap=tk.WORD, height=10)
         self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Прогресс и подвал
-        footer_frame = ttk.Frame(self.main_frame)
-        footer_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
-        
-        self.progress = ttk.Progressbar(footer_frame, mode='indeterminate')
-        self.progress.pack(fill=tk.X, expand=True, padx=5)
-        
-        # Настройка растягивания
-        self.main_frame.columnconfigure(0, weight=1)
-        self.main_frame.columnconfigure(1, weight=1)
-        self.main_frame.rowconfigure(1, weight=1)
-        self.main_frame.rowconfigure(2, weight=1)
-        
-        # Привязываем событие выбора сообщения
-        self.messages_tree.bind('<<TreeviewSelect>>', self.on_message_select)
+        # Индикатор прогресса
+        self.progress = ttk.Progressbar(self.main_frame, mode='indeterminate')
+        self.progress.pack(fill=tk.X, padx=5, pady=5)
     
     def setup_config_tab(self):
         """Настройка вкладки конфига"""
         # Выбор конфига
         ttk.Label(self.config_frame, text="Выберите конфиг:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.config_var = tk.StringVar()
+        self.config_var = tk.StringVar(value=self.settings.get('last_config', ''))
         self.config_combo = ttk.Combobox(self.config_frame, textvariable=self.config_var, state="readonly")
-        configs = get_config_files(self.app_dir)
-        self.config_combo['values'] = configs
+        config_files = get_config_files(self.app_dir)
+        self.config_combo['values'] = config_files
         
-        # Выбираем последний использованный конфиг или первый доступный
-        if self.settings.get('last_config') in configs:
-            self.config_combo.set(self.settings['last_config'])
-        elif configs:
-            self.config_combo.set(configs[0])
+        # Устанавливаем значение по умолчанию, если оно есть
+        if self.settings.get('last_config') in config_files:
+            self.config_combo.set(self.settings.get('last_config'))
+        elif config_files:
+            self.config_combo.set(config_files[0])
         
         self.config_combo.grid(row=0, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=5, pady=5)
         
@@ -624,13 +682,29 @@ class TelegramSummarizerGUI:
                         return
                 
                 # Получаем фильтры от пользователя
+                dialog_limit = self.max_dialogs_var.get()
+                self.log(f"Значение поля max_dialogs_var: {dialog_limit}")
+                
+                try:
+                    dialog_limit_int = int(dialog_limit)
+                    self.log(f"Преобразовано в целое число: {dialog_limit_int}")
+                except ValueError as e:
+                    self.log(f"Ошибка преобразования лимита диалогов в число: {e}")
+                    dialog_limit_int = 100  # Значение по умолчанию
+                    self.log(f"Установлено значение по умолчанию: {dialog_limit_int}")
+                
                 filters = {
                     'search': self.dialog_search_var.get(),
-                    'limit': int(self.max_dialogs_var.get()),
-                    'sort': self.dialog_sort_var.get()
+                    'sort': self.dialog_sort_var.get(),
+                    'limit': dialog_limit_int,
+                    'force_refresh': False  # Не обновляем кеш при обычной загрузке
                 }
                 
+                self.log(f"Применяемые фильтры для диалогов: {filters}")
+                
                 self.dialogs = await self.client_manager.filter_dialogs(filters)
+                self.log(f"Получено диалогов после фильтрации: {len(self.dialogs)}")
+                
                 self.dialogs_tree.delete(*self.dialogs_tree.get_children())
                 
                 for dialog in self.dialogs:
@@ -749,86 +823,100 @@ openai_api_key = '{self.openai_key_var.get()}'
         except Exception as e:
             self.log(f"Ошибка при сохранении конфига: {e}")
 
-    def send_message(self):
-        """Отправка сообщения в чат"""
-        message = self.message_var.get().strip()
+    def send_to_ai(self):
+        """Отправка выбранных сообщений в AI"""
+        # Получаем текст из поля ввода
+        message = self.ai_input.get()
         if not message:
+            self.log("Ошибка: пустой запрос к ИИ")
             return
         
-        self.message_var.set('')  # Очищаем поле ввода
-        self.chat_history.insert(tk.END, f"Вы: {message}\n")
-        self.chat_history.see(tk.END)
+        # Очищаем поле ввода
+        self.ai_input.delete(0, tk.END)
         
+        # Отображаем сообщение пользователя в чате
+        self.ai_chat.insert(tk.END, f"Вы: {message}\n\n")
+        self.ai_chat.see(tk.END)
+        
+        # Показываем индикатор прогресса
         self.progress.start()
-        self.send_btn.state(['disabled'])
-        self.message_entry.state(['disabled'])
+        self.send_to_ai_btn.state(['disabled'])
+        self.ai_input.state(['disabled'])
         
-        async def process_message():
+        async def process_ai_request():
             try:
-                # Загружаем конфиг для OpenAI
-                config_name = self.config_var.get()
-                config_path = os.path.join(self.app_dir, "configs", f"{config_name}.py")
-                config = load_config(config_path)
-                
-                # Создаем клиент OpenAI
-                openai_client = openai.AsyncOpenAI(api_key=config.openai_api_key)
+                # Проверяем, что клиент инициализирован
+                if not self.client_manager or not hasattr(self.client_manager, 'client') or not self.client_manager.client.is_connected():
+                    if not await self.client_manager.init_client():
+                        self.log("Ошибка: клиент не инициализирован")
+                        return
                 
                 # Собираем контекст из выбранных сообщений
                 selected_messages = []
                 for item in self.messages_tree.selection():
-                    values = self.messages_tree.item(item)['values']
-                    if values and len(values) > 2:
-                        # Убедимся, что мы работаем со строками
-                        selected_messages.append(str(values[2]))
+                    item_data = self.messages_tree.item(item)
+                    values = item_data['values']
+                    if values and len(values) >= 3:
+                        sender = values[1]
+                        text = values[2]
+                        date = values[3]
+                        selected_messages.append(f"{sender} ({date}): {text}")
                 
                 context = "\n".join(selected_messages)
                 
-                # Отправляем запрос
-                response = await openai_client.chat.completions.create(
-                    model=self.settings['openai_model'],
-                    messages=[
-                        {"role": "system", "content": self.settings['system_prompt']},
-                        {"role": "user", "content": f"{context}\n{message}"}
-                    ]
+                self.log(f"Отправка запроса к ИИ: {message}")
+                self.log(f"Контекст (выбрано {len(selected_messages)} сообщений)")
+                
+                # Используем AI-менеджер для получения ответа
+                # Проверяем, есть ли API ключ в настройках
+                if 'openai_api_key' not in self.settings:
+                    # Получаем API ключ из конфига
+                    config_name = self.config_var.get()
+                    config_path = os.path.join(self.app_dir, "configs", f"{config_name}.py")
+                    config = load_config(config_path)
+                    self.settings['openai_api_key'] = config.openai_api_key
+                
+                # Получаем ответ от ИИ
+                response = await self.ai_manager.get_response(
+                    user_query=message, 
+                    context=context
                 )
                 
-                # Получаем ответ
-                ai_response = response.choices[0].message.content
-                self.chat_history.insert(tk.END, f"ИИ: {ai_response}\n\n")
-                self.chat_history.see(tk.END)
+                # Отображаем ответ в чате
+                self.ai_chat.insert(tk.END, f"ИИ: {response}\n\n")
+                self.ai_chat.see(tk.END)
                 
             except Exception as e:
-                self.log(f"Ошибка при обработке сообщения: {e}")
-                self.chat_history.insert(tk.END, f"Ошибка: {str(e)}\n\n")
-                self.chat_history.see(tk.END)
+                self.log(f"Ошибка при отправке запроса к ИИ: {e}")
+                import traceback
+                self.log(traceback.format_exc())
+                self.ai_chat.insert(tk.END, f"Ошибка: {str(e)}\n\n")
+                self.ai_chat.see(tk.END)
             finally:
                 self.progress.stop()
-                self.send_btn.state(['!disabled'])
-                self.message_entry.state(['!disabled'])
+                self.send_to_ai_btn.state(['!disabled'])
+                self.ai_input.state(['!disabled'])
         
-        asyncio.run_coroutine_threadsafe(process_message(), self.loop)
+        asyncio.run_coroutine_threadsafe(process_ai_request(), self.loop)
 
-    def load_filtered_messages(self):
-        """Загрузка сообщений с учетом текущего фильтра"""
+    def load_messages(self):
+        """Загрузка сообщений для выбранного диалога"""
+        if not hasattr(self, 'selected_dialog_id') or self.selected_dialog_id is None:
+            self.log("Ошибка: не выбран диалог")
+            return
+        
+        self.log(f"Загрузка сообщений для диалога ID: {self.selected_dialog_id}")
+        
         self.progress.start()
         self.load_messages_btn.state(['disabled'])
         
         async def run():
             try:
-                # Проверяем и инициализируем клиент, если необходимо
-                if not self.client_manager or not self.client_manager.client.is_connected():
-                    self.log("Клиент не подключен, инициализация...")
+                # Проверяем, что клиент инициализирован
+                if not self.client_manager or not hasattr(self.client_manager, 'client') or not self.client_manager.client.is_connected():
                     if not await self.client_manager.init_client():
                         self.log("Ошибка: клиент не инициализирован")
                         return
-                
-                selected_items = self.dialogs_tree.selection()
-                if not selected_items:
-                    self.log("Не выбран целевой чат")
-                    return
-                    
-                selected_item = selected_items[0]
-                dialog_id = self.dialogs_tree.item(selected_item)['values'][4]
                 
                 # Получаем фильтры от пользователя
                 filters = {
@@ -837,18 +925,39 @@ openai_api_key = '{self.openai_key_var.get()}'
                     'filter': self.message_filter_var.get()
                 }
                 
-                self.messages = await self.client_manager.filter_messages(dialog_id, filters)
+                # Логируем запрос для отладки
+                self.log(f"Загрузка сообщений для диалога {self.selected_dialog_id} с фильтрами: {filters}")
+                
+                # Загружаем сообщения
+                messages = await self.client_manager.filter_messages(self.selected_dialog_id, filters)
+                
+                # Очищаем список сообщений
                 self.messages_tree.delete(*self.messages_tree.get_children())
                 
-                for message in self.messages:
-                    sender = message.get('sender_name', 'Неизвестно')
-                    text = message['text'].replace('\n', ' ')
-                    date = message['date'].strftime('%Y-%m-%d %H:%M:%S')
-                    self.messages_tree.insert('', 'end', values=(message['id'], sender, text, date))
+                # Заполняем список сообщений
+                for message in messages:
+                    # Проверяем тип поля date и форматируем соответственно
+                    if isinstance(message['date'], str):
+                        date_str = message['date']  # Если это уже строка, используем как есть
+                    else:
+                        # Если это объект datetime, форматируем его
+                        date_str = message['date'].strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    self.messages_tree.insert('', 'end', values=(
+                        message['id'],
+                        message['sender_name'],
+                        message['text'][:100] + ('...' if len(message['text']) > 100 else ''),
+                        date_str
+                    ))
                 
-                self.log(f"Сообщения загружены: {len(self.messages)}")
+                # Сохраняем сообщения для последующей фильтрации
+                self.messages = messages
+                
+                self.log(f"Сообщения загружены: {len(messages)}")
             except Exception as e:
                 self.log(f"Ошибка при загрузке сообщений: {e}")
+                import traceback
+                self.log(traceback.format_exc())
             finally:
                 self.progress.stop()
                 self.load_messages_btn.state(['!disabled'])
@@ -863,7 +972,7 @@ openai_api_key = '{self.openai_key_var.get()}'
         try:
             # Получаем фильтры от пользователя
             search_filter = self.message_search_var.get().lower()
-            sort_key = self.sort_var.get()
+            sort_key = self.message_sort_var.get()
             
             filtered_messages = [
                 message for message in self.messages
@@ -877,7 +986,13 @@ openai_api_key = '{self.openai_key_var.get()}'
             for message in filtered_messages:
                 sender = message.get('sender_name', 'Неизвестно')
                 text = message['text'].replace('\n', ' ')
-                date = message['date'].strftime('%Y-%m-%d %H:%M:%S')
+                
+                # Проверяем тип поля date и форматируем соответственно
+                if isinstance(message['date'], str):
+                    date = message['date']
+                else:
+                    date = message['date'].strftime('%Y-%m-%d %H:%M:%S')
+                
                 self.messages_tree.insert('', 'end', values=(message['id'], sender, text, date))
             
             self.log(f"Сообщения отфильтрованы: {len(filtered_messages)}")
@@ -893,12 +1008,52 @@ openai_api_key = '{self.openai_key_var.get()}'
         if not selected_items:
             return
         
-        selected_item = selected_items[0]
-        message_text = self.messages_tree.item(selected_item)['values'][2]
+        # Получаем ID выбранного сообщения
+        message_id = self.messages_tree.item(selected_items[0])['values'][0]
+        
+        # Логируем для отладки
+        self.log(f"Выбрано сообщение с ID: {message_id}")
+        
+        # Находим сообщение по ID в списке messages
+        selected_message = None
+        for message in self.messages:
+            if str(message['id']) == str(message_id):  # Преобразуем оба к строке для сравнения
+                selected_message = message
+                break
         
         # Отображаем полный текст сообщения
-        self.full_message_text.delete('1.0', tk.END)
-        self.full_message_text.insert(tk.END, message_text)
+        if selected_message:
+            # Разрешаем редактирование
+            self.message_view.config(state=tk.NORMAL)
+            
+            # Очищаем предыдущий текст
+            self.message_view.delete(1.0, tk.END)
+            
+            # Собираем информацию о сообщении
+            sender = selected_message.get('sender_name', 'Неизвестно')
+            
+            # Определяем, как форматировать дату
+            if isinstance(selected_message['date'], str):
+                date = selected_message['date']
+            else:
+                date = selected_message['date'].strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Форматируем заголовок сообщения
+            header = f"От: {sender}\nДата: {date}\n\n"
+            
+            # Вставляем информацию в текстовое поле
+            self.message_view.insert(tk.END, header)
+            self.message_view.insert(tk.END, selected_message['text'])
+            
+            # Делаем текстовое поле только для чтения
+            self.message_view.config(state=tk.DISABLED)
+            self.log(f"Отображено сообщение: {sender}, {date}")
+        else:
+            self.message_view.config(state=tk.NORMAL)
+            self.message_view.delete(1.0, tk.END)
+            self.message_view.insert(tk.END, f"Сообщение с ID {message_id} не найдено")
+            self.message_view.config(state=tk.DISABLED)
+            self.log(f"Ошибка: сообщение с ID {message_id} не найдено в списке из {len(self.messages)} сообщений")
 
     def filter_dialogs(self):
         """Фильтрация диалогов"""
@@ -972,6 +1127,10 @@ openai_api_key = '{self.openai_key_var.get()}'
                 'geometry': geometry
             }
             
+            # Удаляем API ключ из настроек перед сохранением
+            if 'openai_api_key' in settings:
+                del settings['openai_api_key']
+            
             with open(settings_path, 'w', encoding='utf-8') as f:
                 json.dump(settings, f, indent=2, ensure_ascii=False)
             
@@ -1040,12 +1199,18 @@ openai_api_key = '{self.openai_key_var.get()}'
     def treeview_sort_column(self, tv, col, reverse):
         """Сортировка колонки в Treeview"""
         l = [(tv.set(k, col), k) for k in tv.get_children('')]
-        try:
-            # Пробуем сортировать как числа
-            l.sort(key=lambda t: int(t[0]), reverse=reverse)
-        except ValueError:
-            # Если не получилось, сортируем как строки
+        
+        # Особая обработка для даты
+        if col == 'date':
+            # Пытаемся сортировать даты
             l.sort(reverse=reverse)
+        else:
+            try:
+                # Пробуем сортировать как числа
+                l.sort(key=lambda t: int(t[0]), reverse=reverse)
+            except ValueError:
+                # Если не получилось, сортируем как строки
+                l.sort(reverse=reverse)
         
         # Переупорядочиваем элементы
         for index, (val, k) in enumerate(l):
@@ -1085,8 +1250,9 @@ openai_api_key = '{self.openai_key_var.get()}'
         self.selected_dialog_id = dialog_id
         self.selected_dialog_name = values[0]  # Название диалога
         
-        # Обновляем заголовок фрейма сообщений
-        self.messages_filter_frame.configure(text=f"Сообщения: {self.selected_dialog_name}")
+        # Обновляем заголовки для лучшей визуализации контекста
+        self.messages_filter_frame.configure(text=f"Фильтры сообщений: {self.selected_dialog_name}")
+        self.messages_frame.configure(text=f"Сообщения из: {self.selected_dialog_name}")
         
         # Очищаем список сообщений
         self.messages_tree.delete(*self.messages_tree.get_children())
@@ -1094,58 +1260,47 @@ openai_api_key = '{self.openai_key_var.get()}'
         # Загружаем сообщения для выбранного диалога
         self.load_messages()
 
-    def load_messages(self):
-        """Загрузка сообщений для выбранного диалога"""
-        if not hasattr(self, 'selected_dialog_id') or self.selected_dialog_id is None:
-            self.log("Ошибка: не выбран диалог")
-            return
-        
-        self.log(f"Загрузка сообщений для диалога ID: {self.selected_dialog_id}")
-        
+    def update_dialogs_cache(self):
+        """Обновление кеша диалогов"""
         self.progress.start()
-        self.load_messages_btn.state(['disabled'])
+        self.update_cache_btn.state(['disabled'])
         
         async def run():
             try:
-                # Проверяем, что клиент инициализирован
-                if not self.client_manager or not hasattr(self.client_manager, 'client') or not self.client_manager.client.is_connected():
-                    if not await self.client_manager.init_client():
-                        self.log("Ошибка: клиент не инициализирован")
-                        return
+                if not self.client_manager:
+                    self.client_manager = TelegramClientManager({
+                        'config_name': self.config_var.get(),
+                        'app_dir': self.app_dir,
+                        'debug': self.debug_var.get()
+                    })
                 
-                # Получаем фильтры от пользователя
+                if not await self.client_manager.init_client():
+                    self.log("Ошибка: клиент не инициализирован")
+                    return
+                
+                # Получаем лимит из настроек
+                dialog_limit = int(self.max_dialogs_var.get())
+                
+                # Применяем фильтры с force_refresh=True для обновления кеша
                 filters = {
-                    'search': self.message_search_var.get(),
-                    'limit': int(self.max_messages_var.get()),
-                    'filter': self.message_filter_var.get()
+                    'search': '',
+                    'sort': 'name',
+                    'limit': dialog_limit,
+                    'force_refresh': True  # Принудительное обновление кеша
                 }
                 
-                # Логируем запрос для отладки
-                self.log(f"Загрузка сообщений для диалога {self.selected_dialog_id} с фильтрами: {filters}")
+                self.log(f"Запуск обновления кеша диалогов с лимитом {dialog_limit}")
+                await self.client_manager.filter_dialogs(filters)
+                self.log("Кеш диалогов успешно обновлен")
                 
-                # Загружаем сообщения
-                messages = await self.client_manager.filter_messages(self.selected_dialog_id, filters)
-                
-                # Очищаем список сообщений
-                self.messages_tree.delete(*self.messages_tree.get_children())
-                
-                # Заполняем список сообщений
-                for message in messages:
-                    date_str = message['date'].strftime('%Y-%m-%d %H:%M:%S')
-                    self.messages_tree.insert('', 'end', values=(
-                        message['id'],
-                        message['sender_name'],
-                        message['text'][:100] + ('...' if len(message['text']) > 100 else ''),
-                        date_str
-                    ))
-                
-                self.log(f"Сообщения загружены: {len(messages)}")
+                # Обновляем список диалогов
+                self.load_filtered_dialogs()
             except Exception as e:
-                self.log(f"Ошибка при загрузке сообщений: {e}")
+                self.log(f"Ошибка при обновлении кеша диалогов: {e}")
                 import traceback
                 self.log(traceback.format_exc())
             finally:
                 self.progress.stop()
-                self.load_messages_btn.state(['!disabled'])
+                self.update_cache_btn.state(['!disabled'])
         
         asyncio.run_coroutine_threadsafe(run(), self.loop) 

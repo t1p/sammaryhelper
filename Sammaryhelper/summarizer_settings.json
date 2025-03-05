@@ -7,11 +7,11 @@
     "gpt-4-turbo-preview",
     "chatgpt-4o-latest"
   ],
-  "last_config": "config_tip",
-  "max_dialogs": "10",
-  "max_messages": "100",
+  "last_config": "config_0707",
+  "max_dialogs": "3000",
+  "max_messages": "1000",
   "debug": true,
   "window_state": {
-    "geometry": "1920x1007+0+0"
+    "geometry": "1278x661+640+0"
   }
 }

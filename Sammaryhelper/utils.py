@@ -79,6 +79,7 @@ def save_settings(app_dir: str, settings: Dict[str, Any]) -> None:
         settings_path = os.path.join(app_dir, 'summarizer_settings.json')
         os.makedirs(os.path.dirname(settings_path), exist_ok=True)
         
+        # Создаем копию настроек без API ключа
         settings_to_save = {
             'openai_model': settings.get('openai_model'),
             'system_prompt': settings.get('system_prompt'),
@@ -88,6 +89,10 @@ def save_settings(app_dir: str, settings: Dict[str, Any]) -> None:
             'max_dialogs': settings.get('max_dialogs', '100'),
             'max_messages': settings.get('max_messages', '100')
         }
+        
+        # Сохраняем состояние окна, если оно есть
+        if 'window_state' in settings:
+            settings_to_save['window_state'] = settings['window_state']
         
         with open(settings_path, 'w', encoding='utf-8') as f:
             json.dump(settings_to_save, f, ensure_ascii=False, indent=2)

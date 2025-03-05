@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import datetime
 try:
     import asyncpg
     ASYNCPG_AVAILABLE = True
@@ -10,7 +11,13 @@ except ImportError:
     print("Для установки выполните: pip install asyncpg")
 
 from typing import Dict, List, Any, Optional, Tuple
-from datetime import datetime
+
+# Кастомный JSONEncoder для обработки datetime
+class DateTimeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime.datetime):
+            return obj.isoformat()
+        return super(DateTimeEncoder, self).default(obj)
 
 class DatabaseHandler:
     """Класс для работы с базой данных PostgreSQL"""
@@ -174,19 +181,29 @@ class DatabaseHandler:
             self.log(f"Ошибка при кешировании диалогов: {e}")
             return False
     
-    async def get_cached_dialogs(self, account_id: str) -> List[Dict[str, Any]]:
+    async def get_cached_dialogs(self, account_id: str, limit: int = None) -> List[Dict[str, Any]]:
         """Получение кешированных диалогов"""
         try:
-            self.log(f"Получение кешированных диалогов для аккаунта {account_id}")
+            self.log(f"Получение кешированных диалогов для аккаунта {account_id}, лимит: {limit}")
             async with self.connection_pool.acquire() as connection:
-                rows = await connection.fetch('''
+                # Добавляем LIMIT в SQL-запрос, если limit задан
+                query = '''
                     SELECT data FROM dialogs 
                     WHERE account_id = $1
                     ORDER BY updated_at DESC
-                ''', account_id)
+                '''
+                
+                # Добавляем ограничение, если указан limit
+                if limit:
+                    query += f" LIMIT {limit}"
+                    self.log(f"SQL запрос с лимитом {limit}: {query}")
+                else:
+                    self.log(f"SQL запрос без лимита: {query}")
+                    
+                rows = await connection.fetch(query, account_id)
                 
                 result = [json.loads(row['data']) for row in rows]
-                self.log(f"Получено {len(result)} кешированных диалогов")
+                self.log(f"Получено {len(result)} кешированных диалогов из БД")
                 return result
         except Exception as e:
             self.log(f"Ошибка при получении кешированных диалогов: {e}")
@@ -195,9 +212,41 @@ class DatabaseHandler:
     async def cache_messages(self, messages: List[Dict[str, Any]], dialog_id: int, account_id: str) -> bool:
         """Кеширование сообщений диалога"""
         try:
+            self.log(f"Кеширование {len(messages)} сообщений для диалога {dialog_id}")
             async with self.connection_pool.acquire() as connection:
                 async with connection.transaction():
                     for message in messages:
+                        # Преобразуем данные в строку JSON с поддержкой datetime
+                        data_json = json.dumps(message, cls=DateTimeEncoder, ensure_ascii=False)
+                        
+                        # Преобразуем строковую дату в datetime объект, если это строка
+                        message_date = message.get('date')
+                        if isinstance(message_date, str):
+                            try:
+                                # Пробуем распарсить ISO формат с часовым поясом
+                                if '+' in message_date or 'Z' in message_date:
+                                    message_date = datetime.datetime.fromisoformat(message_date.replace('Z', '+00:00'))
+                                    # Убираем информацию о часовом поясе
+                                    message_date = message_date.replace(tzinfo=None)
+                                else:
+                                    # Простой формат без часового пояса
+                                    message_date = datetime.datetime.fromisoformat(message_date)
+                            except ValueError:
+                                # Если не удалось распарсить, используем текущую дату
+                                self.log(f"Не удалось распарсить дату: {message_date}, используем текущую")
+                                message_date = datetime.datetime.now()
+                        elif isinstance(message_date, datetime.datetime):
+                            # Если это уже datetime объект, убедимся что у него нет tzinfo
+                            if message_date.tzinfo is not None:
+                                message_date = message_date.replace(tzinfo=None)
+                        
+                        # Если date всё еще не datetime, используем текущее время
+                        if not isinstance(message_date, datetime.datetime):
+                            message_date = datetime.datetime.now()
+                            self.log(f"Дата не является объектом datetime, используем текущую: {message_date}")
+                        
+                        self.log(f"Дата для сообщения ID {message['id']}: {message_date} (тип: {type(message_date)})")
+                        
                         await connection.execute('''
                             INSERT INTO messages (id, dialog_id, sender_id, sender_name, text, date, account_id, data)
                             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -215,17 +264,21 @@ class DatabaseHandler:
                         message.get('sender_id'),
                         message.get('sender_name', 'Неизвестно'),
                         message.get('text', ''),
-                        message['date'],
+                        message_date,  # Теперь передаем объект datetime без timezone
                         account_id,
-                        json.dumps(message))
+                        data_json)
+            self.log(f"Сообщения успешно кешированы")
             return True
         except Exception as e:
-            print(f"Ошибка при кешировании сообщений: {e}")
+            self.log(f"Ошибка при кешировании сообщений: {e}")
+            import traceback
+            self.log(traceback.format_exc())
             return False
     
     async def get_cached_messages(self, dialog_id: int, account_id: str) -> List[Dict[str, Any]]:
         """Получение кешированных сообщений диалога"""
         try:
+            self.log(f"Получение кешированных сообщений для диалога {dialog_id}")
             async with self.connection_pool.acquire() as connection:
                 rows = await connection.fetch('''
                     SELECT data FROM messages 
@@ -233,9 +286,11 @@ class DatabaseHandler:
                     ORDER BY date DESC
                 ''', dialog_id, account_id)
                 
-                return [json.loads(row['data']) for row in rows]
+                result = [json.loads(row['data']) for row in rows]
+                self.log(f"Получено {len(result)} кешированных сообщений")
+                return result
         except Exception as e:
-            print(f"Ошибка при получении кешированных сообщений: {e}")
+            self.log(f"Ошибка при получении кешированных сообщений: {e}")
             return []
     
     async def cache_ai_interaction(self, user_query: str, context: str, model: str, 
