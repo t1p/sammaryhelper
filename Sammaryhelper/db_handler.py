@@ -22,15 +22,12 @@ class DateTimeEncoder(json.JSONEncoder):
 class DatabaseHandler:
     """Класс для работы с базой данных PostgreSQL"""
     
-    def __init__(self, config_path: str = None, debug: bool = False):
+    def __init__(self, config_name: str = None, app_dir: str = None, debug: bool = False):
         """Инициализация обработчика базы данных"""
         self.connection_pool = None
         self.debug = debug
-        self.config_path = config_path or os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), 
-            "configs", 
-            "db_config.json"
-        )
+        self.app_dir = app_dir or os.path.dirname(os.path.abspath(__file__))
+        self.config_name = config_name or 'config_0707'  # Используем имя конфига по умолчанию
         self.config = self._load_config()
         
     def log(self, message):
@@ -39,26 +36,36 @@ class DatabaseHandler:
             print(f"[DB] {message}")
     
     def _load_config(self) -> Dict[str, Any]:
-        """Загрузка конфигурации подключения к БД"""
+        """Загрузка конфигурации подключения к БД из основного конфига"""
         try:
-            if os.path.exists(self.config_path):
-                with open(self.config_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+            # Загружаем основной конфиг
+            config_path = os.path.join(self.app_dir, "configs", f"{self.config_name}.py")
+            if os.path.exists(config_path):
+                # Импортируем модуль конфигурации
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("config", config_path)
+                config = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(config)
+                
+                # Проверяем, есть ли настройки базы данных в конфиге
+                if hasattr(config, 'db_settings'):
+                    self.log(f"Загружены настройки БД из конфига: {config_path}")
+                    return config.db_settings
+                else:
+                    self.log(f"В конфиге отсутствуют настройки БД, используем настройки по умолчанию")
             else:
-                # Создаем шаблон конфигурации, если файл не существует
-                default_config = {
-                    "host": "localhost",
-                    "port": 5432,
-                    "database": "telegram_summarizer",
-                    "user": "postgres",
-                    "password": "postgres"
-                }
-                os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-                with open(self.config_path, 'w', encoding='utf-8') as f:
-                    json.dump(default_config, f, indent=2)
-                return default_config
+                self.log(f"Файл конфига не найден: {config_path}")
+            
+            # Если не удалось загрузить настройки, возвращаем значения по умолчанию
+            return {
+                "host": "localhost",
+                "port": 5432,
+                "database": "telegram_summarizer",
+                "user": "postgres",
+                "password": "postgres"
+            }
         except Exception as e:
-            print(f"Ошибка при загрузке конфигурации БД: {e}")
+            self.log(f"Ошибка при загрузке конфигурации БД: {e}")
             return {
                 "host": "localhost",
                 "port": 5432,

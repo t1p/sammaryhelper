@@ -376,10 +376,44 @@ class TelegramSummarizerGUI:
         ttk.Entry(self.config_frame, textvariable=self.openai_key_var, show="*").grid(row=10, column=1, 
                   columnspan=2, sticky=(tk.W, tk.E), padx=5)
         
+        # Добавляем секцию настроек базы данных
+        ttk.Label(self.config_frame, text="Настройки базы данных:", font=('', 10, 'bold')).grid(
+            row=11, column=0, columnspan=3, sticky=tk.W, pady=(10,5))
+        
+        # Хост БД
+        ttk.Label(self.config_frame, text="Хост:").grid(row=12, column=0, sticky=tk.W)
+        self.db_host_var = tk.StringVar(value="localhost")
+        ttk.Entry(self.config_frame, textvariable=self.db_host_var).grid(
+            row=12, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=5)
+        
+        # Порт БД
+        ttk.Label(self.config_frame, text="Порт:").grid(row=13, column=0, sticky=tk.W)
+        self.db_port_var = tk.StringVar(value="5432")
+        ttk.Entry(self.config_frame, textvariable=self.db_port_var).grid(
+            row=13, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=5)
+        
+        # Имя базы данных
+        ttk.Label(self.config_frame, text="База данных:").grid(row=14, column=0, sticky=tk.W)
+        self.db_name_var = tk.StringVar(value="telegram_summarizer")
+        ttk.Entry(self.config_frame, textvariable=self.db_name_var).grid(
+            row=14, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=5)
+        
+        # Пользователь БД
+        ttk.Label(self.config_frame, text="Пользователь:").grid(row=15, column=0, sticky=tk.W)
+        self.db_user_var = tk.StringVar(value="postgres")
+        ttk.Entry(self.config_frame, textvariable=self.db_user_var).grid(
+            row=15, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=5)
+        
+        # Пароль БД
+        ttk.Label(self.config_frame, text="Пароль:").grid(row=16, column=0, sticky=tk.W)
+        self.db_password_var = tk.StringVar(value="postgres")
+        ttk.Entry(self.config_frame, textvariable=self.db_password_var, show="*").grid(
+            row=16, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=5)
+        
         # Кнопка сохранения
         self.save_config_btn = ttk.Button(self.config_frame, text="Сохранить конфиг", 
                                         command=self.save_config)
-        self.save_config_btn.grid(row=11, column=0, columnspan=3, pady=20)
+        self.save_config_btn.grid(row=17, column=0, columnspan=3, pady=20)
         
         # Загружаем текущие настройки конфига
         self.load_current_config()
@@ -790,6 +824,15 @@ class TelegramSummarizerGUI:
                 self.proxy_host_var.set(config.proxy_settings.get('proxy_host', ''))
                 self.proxy_port_var.set(str(config.proxy_settings.get('proxy_port', '')))
             
+            # Загружаем настройки базы данных
+            if hasattr(config, 'db_settings'):
+                db_settings = config.db_settings
+                self.db_host_var.set(db_settings.get('host', 'localhost'))
+                self.db_port_var.set(str(db_settings.get('port', 5432)))
+                self.db_name_var.set(db_settings.get('database', 'telegram_summarizer'))
+                self.db_user_var.set(db_settings.get('user', 'postgres'))
+                self.db_password_var.set(db_settings.get('password', 'postgres'))
+            
         except Exception as e:
             self.log(f"Ошибка при загрузке конфига: {e}")
 
@@ -813,6 +856,15 @@ proxy_settings = {{
 
 # OpenAI API key
 openai_api_key = '{self.openai_key_var.get()}'
+
+# Настройки базы данных
+db_settings = {{
+    "host": "{self.db_host_var.get()}",
+    "port": {self.db_port_var.get() or 5432},
+    "database": "{self.db_name_var.get()}",
+    "user": "{self.db_user_var.get()}",
+    "password": "{self.db_password_var.get()}"
+}}
 """
             
             with open(config_path, 'w', encoding='utf-8') as f:
