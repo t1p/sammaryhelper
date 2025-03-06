@@ -71,7 +71,9 @@ class TelegramSummarizerGUI:
         self.client_manager = TelegramClientManager({
             'config_name': config_name,
             'app_dir': self.app_dir,
-            'debug': self.debug_var.get()
+            'debug': self.debug_var.get(),
+            'config_format': 'json',
+            'configs_in_parent_dir': False
         })
         self.ai_manager = AIChatManager(self.settings)
         self.dialogs = []
@@ -321,7 +323,13 @@ class TelegramSummarizerGUI:
         ttk.Label(self.config_frame, text="Выберите конфиг:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.config_var = tk.StringVar(value=self.settings.get('last_config', ''))
         self.config_combo = ttk.Combobox(self.config_frame, textvariable=self.config_var, state="readonly")
-        config_files = get_config_files(self.app_dir)
+        
+        # Получаем список JSON и PY-файлов конфигурации
+        configs_dir = os.path.join(self.app_dir, "configs")
+        os.makedirs(configs_dir, exist_ok=True)  # Создаем директорию если не существует
+        
+        config_files = [f.split('.')[0] for f in os.listdir(configs_dir) 
+                        if f.endswith(('.json', '.py'))]
         self.config_combo['values'] = config_files
         
         # Устанавливаем значение по умолчанию, если оно есть
@@ -376,10 +384,44 @@ class TelegramSummarizerGUI:
         ttk.Entry(self.config_frame, textvariable=self.openai_key_var, show="*").grid(row=10, column=1, 
                   columnspan=2, sticky=(tk.W, tk.E), padx=5)
         
+        # Добавляем секцию настроек базы данных
+        ttk.Label(self.config_frame, text="Настройки базы данных:", font=('', 10, 'bold')).grid(
+            row=11, column=0, columnspan=3, sticky=tk.W, pady=(10,5))
+
+        # Хост БД
+        ttk.Label(self.config_frame, text="Хост:").grid(row=12, column=0, sticky=tk.W)
+        self.db_host_var = tk.StringVar(value="localhost")
+        ttk.Entry(self.config_frame, textvariable=self.db_host_var).grid(
+            row=12, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=5)
+        
+        # Порт БД
+        ttk.Label(self.config_frame, text="Порт:").grid(row=13, column=0, sticky=tk.W)
+        self.db_port_var = tk.StringVar(value="5432")
+        ttk.Entry(self.config_frame, textvariable=self.db_port_var).grid(
+            row=13, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=5)
+        
+        # Имя базы данных
+        ttk.Label(self.config_frame, text="База данных:").grid(row=14, column=0, sticky=tk.W)
+        self.db_name_var = tk.StringVar(value="telegram_summarizer")
+        ttk.Entry(self.config_frame, textvariable=self.db_name_var).grid(
+            row=14, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=5)
+        
+        # Пользователь БД
+        ttk.Label(self.config_frame, text="Пользователь:").grid(row=15, column=0, sticky=tk.W)
+        self.db_user_var = tk.StringVar(value="postgres")
+        ttk.Entry(self.config_frame, textvariable=self.db_user_var).grid(
+            row=15, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=5)
+        
+        # Пароль БД
+        ttk.Label(self.config_frame, text="Пароль:").grid(row=16, column=0, sticky=tk.W)
+        self.db_password_var = tk.StringVar(value="postgres")
+        ttk.Entry(self.config_frame, textvariable=self.db_password_var, show="*").grid(
+            row=16, column=1, columnspan=2, sticky=(tk.W, tk.E), padx=5)
+        
         # Кнопка сохранения
         self.save_config_btn = ttk.Button(self.config_frame, text="Сохранить конфиг", 
                                         command=self.save_config)
-        self.save_config_btn.grid(row=11, column=0, columnspan=3, pady=20)
+        self.save_config_btn.grid(row=17, column=0, columnspan=3, pady=20)
         
         # Загружаем текущие настройки конфига
         self.load_current_config()
@@ -612,7 +654,9 @@ class TelegramSummarizerGUI:
                 self.client_manager = TelegramClientManager({
                     'config_name': config_name,
                     'app_dir': self.app_dir,
-                    'debug': self.debug_var.get()
+                    'debug': self.debug_var.get(),
+                    'config_format': 'json',
+                    'configs_in_parent_dir': False
                 })
                 
                 # Очищаем список диалогов
@@ -772,53 +816,73 @@ class TelegramSummarizerGUI:
         self.log(f"Диалоги отфильтрованы: {len(filtered_dialogs)}")
 
     def load_current_config(self):
-        """Загрузка текущего конфига"""
+        """Загрузка текущего конфига из JSON-файла"""
         try:
             config_name = self.config_var.get()
-            config_path = os.path.join(self.app_dir, "configs", f"{config_name}.py")
-            config = load_config(config_path)
+            config_path = os.path.join(self.app_dir, "configs", f"{config_name}.json")
             
-            # Заполняем поля значениями из конфига
-            self.api_id_var.set(str(getattr(config, 'api_id', '')))
-            self.api_hash_var.set(getattr(config, 'api_hash', ''))
-            self.openai_key_var.set(getattr(config, 'openai_api_key', ''))
-            
-            # Настройки прокси
-            self.use_proxy_var.set(getattr(config, 'use_proxy', False))
-            if hasattr(config, 'proxy_settings'):
-                self.proxy_type_var.set(config.proxy_settings.get('proxy_type', 'socks5'))
-                self.proxy_host_var.set(config.proxy_settings.get('proxy_host', ''))
-                self.proxy_port_var.set(str(config.proxy_settings.get('proxy_port', '')))
-            
+            # Пробуем загрузить конфиг из JSON
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    
+                # Заполняем поля значениями из конфига
+                self.api_id_var.set(str(config.get('api_id', '')))
+                self.api_hash_var.set(config.get('api_hash', ''))
+                self.openai_key_var.set(config.get('openai_api_key', ''))
+                
+                # Настройки прокси
+                self.use_proxy_var.set(config.get('use_proxy', False))
+                if 'proxy_settings' in config:
+                    proxy_settings = config['proxy_settings']
+                    self.proxy_type_var.set(proxy_settings.get('proxy_type', 'socks5'))
+                    self.proxy_host_var.set(proxy_settings.get('proxy_host', ''))
+                    self.proxy_port_var.set(str(proxy_settings.get('proxy_port', '')))
+                
+                # Загружаем настройки базы данных
+                if 'db_settings' in config:
+                    db_settings = config['db_settings']
+                    self.db_host_var.set(db_settings.get('host', 'localhost'))
+                    self.db_port_var.set(str(db_settings.get('port', 5432)))
+                    self.db_name_var.set(db_settings.get('database', 'telegram_summarizer'))
+                    self.db_user_var.set(db_settings.get('user', 'postgres'))
+                    self.db_password_var.set(db_settings.get('password', 'postgres'))
+            else:
+                self.log(f"Конфиг {config_name}.json не найден. Проверьте наличие файла.")
+                
         except Exception as e:
             self.log(f"Ошибка при загрузке конфига: {e}")
 
     def save_config(self):
-        """Сохранение конфига"""
+        """Сохранение конфига в формате JSON"""
         try:
             config_name = self.config_var.get()
-            config_path = os.path.join(self.app_dir, "configs", f"{config_name}.py")
+            config_path = os.path.join(self.app_dir, "configs", f"{config_name}.json")
             
-            config_content = f"""# Telegram API credentials
-api_id = {self.api_id_var.get()}
-api_hash = '{self.api_hash_var.get()}'
-
-# Proxy settings
-use_proxy = {str(self.use_proxy_var.get())}
-proxy_settings = {{
-    'proxy_type': '{self.proxy_type_var.get()}',
-    'proxy_host': '{self.proxy_host_var.get()}',
-    'proxy_port': {self.proxy_port_var.get() or 0}
-}}
-
-# OpenAI API key
-openai_api_key = '{self.openai_key_var.get()}'
-"""
+            # Формируем содержимое JSON-файла конфигурации
+            config_data = {
+                "api_id": int(self.api_id_var.get()) if self.api_id_var.get().isdigit() else 0,
+                "api_hash": self.api_hash_var.get(),
+                "use_proxy": self.use_proxy_var.get(),
+                "proxy_settings": {
+                    "proxy_type": self.proxy_type_var.get(),
+                    "proxy_host": self.proxy_host_var.get(),
+                    "proxy_port": int(self.proxy_port_var.get()) if self.proxy_port_var.get().isdigit() else 0
+                },
+                "openai_api_key": self.openai_key_var.get(),
+                "db_settings": {
+                    "host": self.db_host_var.get(),
+                    "port": int(self.db_port_var.get()) if self.db_port_var.get().isdigit() else 5432,
+                    "database": self.db_name_var.get(),
+                    "user": self.db_user_var.get(),
+                    "password": self.db_password_var.get()
+                }
+            }
             
             with open(config_path, 'w', encoding='utf-8') as f:
-                f.write(config_content)
+                json.dump(config_data, f, indent=4, ensure_ascii=False)
             
-            self.log(f"Конфиг {config_name} успешно сохранен")
+            self.log(f"Конфиг {config_name} успешно сохранен в формате JSON")
             
         except Exception as e:
             self.log(f"Ошибка при сохранении конфига: {e}")
@@ -872,9 +936,10 @@ openai_api_key = '{self.openai_key_var.get()}'
                 if 'openai_api_key' not in self.settings:
                     # Получаем API ключ из конфига
                     config_name = self.config_var.get()
-                    config_path = os.path.join(self.app_dir, "configs", f"{config_name}.py")
-                    config = load_config(config_path)
-                    self.settings['openai_api_key'] = config.openai_api_key
+                    config_path = os.path.join(self.app_dir, "configs", f"{config_name}.json")
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        config_data = json.load(f)
+                    self.settings['openai_api_key'] = config_data['openai_api_key']
                 
                 # Получаем ответ от ИИ
                 response = await self.ai_manager.get_response(
@@ -1271,7 +1336,9 @@ openai_api_key = '{self.openai_key_var.get()}'
                     self.client_manager = TelegramClientManager({
                         'config_name': self.config_var.get(),
                         'app_dir': self.app_dir,
-                        'debug': self.debug_var.get()
+                        'debug': self.debug_var.get(),
+                        'config_format': 'json',
+                        'configs_in_parent_dir': False
                     })
                 
                 if not await self.client_manager.init_client():

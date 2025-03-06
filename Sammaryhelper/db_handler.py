@@ -22,15 +22,12 @@ class DateTimeEncoder(json.JSONEncoder):
 class DatabaseHandler:
     """Класс для работы с базой данных PostgreSQL"""
     
-    def __init__(self, config_path: str = None, debug: bool = False):
+    def __init__(self, config_name: str = None, app_dir: str = None, debug: bool = False):
         """Инициализация обработчика базы данных"""
         self.connection_pool = None
         self.debug = debug
-        self.config_path = config_path or os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), 
-            "configs", 
-            "db_config.json"
-        )
+        self.app_dir = app_dir or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.config_name = config_name or 'config_0707'  # Используем имя конфига по умолчанию
         self.config = self._load_config()
         
     def log(self, message):
@@ -39,31 +36,89 @@ class DatabaseHandler:
             print(f"[DB] {message}")
     
     def _load_config(self) -> Dict[str, Any]:
-        """Загрузка конфигурации подключения к БД"""
+        """Загрузка конфигурации подключения к БД из основного конфига"""
         try:
-            if os.path.exists(self.config_path):
-                with open(self.config_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            else:
-                # Создаем шаблон конфигурации, если файл не существует
-                default_config = {
-                    "host": "localhost",
-                    "port": 5432,
-                    "database": "telegram_summarizer",
-                    "user": "postgres",
-                    "password": "postgres"
-                }
-                os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-                with open(self.config_path, 'w', encoding='utf-8') as f:
-                    json.dump(default_config, f, indent=2)
+            # Проверяем существование директории app_dir
+            if not os.path.isdir(self.app_dir):
+                self.log(f"Указанная директория приложения не существует: {self.app_dir}")
+                raise FileNotFoundError(f"Директория не найдена: {self.app_dir}")
+            
+            # Сначала пробуем загрузить Python-конфиг
+            py_config_path = os.path.join(self.app_dir, "configs", f"{self.config_name}.py")
+            if os.path.exists(py_config_path):
+                try:
+                    # Импортируем модуль конфигурации
+                    import importlib.util
+                    spec = importlib.util.spec_from_file_location("config", py_config_path)
+                    config = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(config)
+                    
+                    # Проверяем, есть ли настройки базы данных в конфиге
+                    if hasattr(config, 'db_settings'):
+                        self.log(f"Загружены настройки БД из Python-конфига: {py_config_path}")
+                        return config.db_settings
+                    else:
+                        self.log(f"В Python-конфиге отсутствуют настройки БД, пробуем JSON-конфиг")
+                except Exception as e:
+                    self.log(f"Ошибка при загрузке Python-конфига: {e}")
+            
+            # Затем пробуем загрузить JSON-конфиг
+            json_config_path = os.path.join(self.app_dir, "configs", f"{self.config_name}.json")
+            if os.path.exists(json_config_path):
+                try:
+                    with open(json_config_path, 'r', encoding='utf-8') as f:
+                        config_data = json.load(f)
+                    self.log(f"Загружены настройки БД из JSON-конфига: {json_config_path}")
+                    return config_data
+                except Exception as e:
+                    self.log(f"Ошибка при загрузке JSON-конфига: {e}")
+            
+            # Проверяем legacy путь к конфигу db_config.json
+            legacy_config_path = os.path.join(self.app_dir, "configs", "db_config.json")
+            if os.path.exists(legacy_config_path):
+                try:
+                    with open(legacy_config_path, 'r', encoding='utf-8') as f:
+                        config_data = json.load(f)
+                    self.log(f"Загружены настройки БД из устаревшего конфига: {legacy_config_path}")
+                    return config_data
+                except Exception as e:
+                    self.log(f"Ошибка при загрузке устаревшего конфига: {e}")
+            
+            # Если ни один конфиг не найден, создаем JSON-конфиг по умолчанию
+            self.log(f"Конфигурационный файл не найден, создаем файл по умолчанию")
+            default_config = {
+                "host": "localhost",
+                "port": 5432,
+                "database": "telegram_summarizer", 
+                "user": "postgres",
+                "password": "postgres"
+            }
+            
+            try:
+                # Создаем директорию configs, если она не существует
+                configs_dir = os.path.join(self.app_dir, "configs")
+                os.makedirs(configs_dir, exist_ok=True)
+                
+                # Записываем конфигурацию по умолчанию в JSON-файл
+                with open(json_config_path, 'w', encoding='utf-8') as f:
+                    json.dump(default_config, f, indent=4)
+                self.log(f"Создан файл конфигурации по умолчанию: {json_config_path}")
                 return default_config
+            except Exception as e:
+                self.log(f"Ошибка при создании файла конфигурации по умолчанию: {e}")
+            
+            # Возвращаем значения по умолчанию, если всё остальное не сработало
+            self.log("Используем настройки БД по умолчанию")
+            return default_config
+            
         except Exception as e:
-            print(f"Ошибка при загрузке конфигурации БД: {e}")
+            self.log(f"Критическая ошибка при загрузке конфигурации БД: {e}")
+            # Возвращаем значения по умолчанию
             return {
                 "host": "localhost",
                 "port": 5432,
                 "database": "telegram_summarizer",
-                "user": "postgres",
+                "user": "postgres", 
                 "password": "postgres"
             }
     

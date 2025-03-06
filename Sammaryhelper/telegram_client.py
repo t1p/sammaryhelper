@@ -5,65 +5,117 @@ import os
 from typing import List, Dict, Any
 from .db_handler import DatabaseHandler
 import datetime
+import json
+import sys
+import importlib
 
 class TelegramClientManager:
-    def __init__(self, config):
-        self.config = config
-        self.client = None
-        self.app_dir = os.path.dirname(os.path.abspath(__file__))
+    def __init__(self, settings):
+        """Инициализация менеджера клиента Telegram.
         
-        # Параметры версии клиента
-        self.system_version = config.get('system_version', 'Windows 10')
-        self.device_model = config.get('device_model', 'Desktop')
-        self.app_version = config.get('app_version', '4.8.1')
+        Args:
+            settings (dict): Словарь с настройками клиента
+        """
+        self.config_name = settings.get('config_name', None)
+        self.app_dir = settings.get('app_dir', None)
+        self.debug = settings.get('debug', False)
+        self.system_version = settings.get('system_version', 'Windows 10')
+        self.device_model = settings.get('device_model', 'PC')
+        self.app_version = settings.get('app_version', '1.0.0')
+        self.config_format = settings.get('config_format', 'json')
+        self.configs_in_parent_dir = settings.get('configs_in_parent_dir', True)  # Добавляем флаг
+        
+        self.dialogs_cache = {}
+        self.client = None
+        self.is_ready = False
         
         # Инициализация обработчика базы данных
         self.db_handler = None
-        self.use_cache = config.get('use_cache', True)
+        self.use_cache = settings.get('use_cache', True)
         
     def log(self, message):
         """Логирование сообщений"""
-        if self.config.get('debug', False):
+        if self.debug:
             print(message)  # Выводим в консоль только если включен режим отладки
 
     async def init_client(self):
-        """Инициализация клиента Telegram"""
+        """Инициализация клиента Telegram."""
         try:
-            if hasattr(self, 'client') and self.client is not None:
-                if self.client.is_connected():
-                    await self.client.disconnect()
-                self.client = None
-
-            # Загружаем конфиг
-            config_path = os.path.join(self.app_dir, "configs", f"{self.config['config_name']}.py")
-            if not os.path.exists(config_path):
-                raise FileNotFoundError(f"Файл конфига не найден: {config_path}")
-
-            # Импортируем конфиг
-            import importlib.util
-            spec = importlib.util.spec_from_file_location("config", config_path)
-            config = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(config)
-
+            if self.debug:
+                print(f"Инициализация клиента: {self.config_name}")
+            
+            # Определяем базовую директорию для конфигов
+            if self.configs_in_parent_dir:
+                configs_base_dir = os.path.dirname(self.app_dir)
+            else:
+                configs_base_dir = self.app_dir
+            
+            # Проверяем формат конфигурации
+            if self.config_format == 'json':
+                # Загружаем JSON-файл
+                config_path = os.path.join(configs_base_dir, "configs", f"{self.config_name}.json")
+                
+                # Пробуем найти файл с расширением .py, если .json не найден
+                if not os.path.exists(config_path):
+                    py_config_path = os.path.join(configs_base_dir, "configs", f"{self.config_name}.py")
+                    if os.path.exists(py_config_path):
+                        self.log(f"JSON конфиг не найден, но найден Python-модуль: {py_config_path}")
+                        self.config_format = 'py'  # Переключаемся на формат Python
+                    else:
+                        raise FileNotFoundError(f"Файл конфига не найден: {config_path}")
+            
+            # Если формат конфига JSON
+            if self.config_format == 'json':
+                config_path = os.path.join(configs_base_dir, "configs", f"{self.config_name}.json")
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    
+                # Извлекаем необходимые параметры
+                api_id = config.get('api_id')
+                api_hash = config.get('api_hash')
+                use_proxy = config.get('use_proxy', False)
+                proxy_settings = config.get('proxy_settings', {})
+                self.openai_api_key = config.get('openai_api_key', '')
+                
+            else:
+                # Загружаем Python-модуль
+                config_path = os.path.join(configs_base_dir, "configs", f"{self.config_name}.py")
+                
+                # Добавляем папку с конфигами в путь импорта
+                sys.path.insert(0, os.path.join(configs_base_dir, "configs"))
+                
+                # Загружаем модуль конфигурации
+                config = importlib.import_module(self.config_name)
+                
+                # Извлекаем необходимые параметры
+                api_id = getattr(config, 'api_id', None)
+                api_hash = getattr(config, 'api_hash', None)
+                use_proxy = getattr(config, 'use_proxy', False)
+                proxy_settings = getattr(config, 'proxy_settings', {})
+                self.openai_api_key = getattr(config, 'openai_api_key', None)
+                
+                # Удаляем путь из путей импорта
+                sys.path.pop(0)
+            
             # Создаем директорию для сессий
             sessions_dir = os.path.join(self.app_dir, "sessions")
             os.makedirs(sessions_dir, exist_ok=True)
-            session_name = os.path.join(sessions_dir, self.config['config_name'])
+            session_name = os.path.join(sessions_dir, self.config_name)
 
             # Настройки прокси
             proxy_settings = None
-            if hasattr(config, 'use_proxy') and config.use_proxy and hasattr(config, 'proxy_settings'):
+            if use_proxy and proxy_settings:
                 proxy_settings = (
-                    config.proxy_settings['proxy_type'],
-                    config.proxy_settings['proxy_host'],
-                    config.proxy_settings['proxy_port']
+                    proxy_settings['proxy_type'],
+                    proxy_settings['proxy_host'],
+                    proxy_settings['proxy_port']
                 )
 
             # Создаем клиент с указанными параметрами версии
             self.client = TelegramClient(
                 session_name,
-                config.api_id,
-                config.api_hash,
+                api_id,
+                api_hash,
                 proxy=proxy_settings,
                 system_version=self.system_version,
                 device_model=self.device_model,
@@ -74,11 +126,11 @@ class TelegramClientManager:
             await self.client.connect()
             if not await self.client.is_user_authorized():
                 await self.client.start()
-                
+            
             # Инициализируем обработчик базы данных, если используется кеширование
             if self.use_cache:
                 try:
-                    self.db_handler = DatabaseHandler(debug=self.config.get('debug', False))
+                    self.db_handler = DatabaseHandler(debug=self.debug)
                     db_connected = await self.db_handler.init_connection()
                     if not db_connected:
                         self.log("Не удалось подключиться к базе данных. Кеширование отключено.")
