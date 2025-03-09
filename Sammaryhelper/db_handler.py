@@ -116,15 +116,72 @@ class DatabaseHandler:
                 )
             ''')
             
-            # Таблица для кеширования сообщений
+            # Проверяем, существует ли колонка message_thread_id в таблице messages
+            column_exists = False
+            try:
+                # Проверяем наличие колонки в таблице
+                column_check = await connection.fetchval('''
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'messages' AND column_name = 'message_thread_id'
+                ''')
+                column_exists = column_check is not None
+                self.log(f"Проверка наличия колонки message_thread_id: {column_exists}")
+            except Exception as e:
+                self.log(f"Ошибка при проверке колонки message_thread_id: {e}")
+            
+            # Если таблица messages не существует, создаем её с нужной структурой
+            if not column_exists:
+                # Пересоздаем таблицу messages с нужной колонкой если она не существует
+                self.log("Создаем или обновляем таблицу messages с колонкой message_thread_id")
+                
+                # Сначала проверяем, существует ли таблица messages
+                table_exists = await connection.fetchval('''
+                    SELECT EXISTS(
+                        SELECT 1 FROM information_schema.tables 
+                        WHERE table_name = 'messages'
+                    )
+                ''')
+                
+                if table_exists:
+                    self.log("Таблица messages существует, добавляем колонку message_thread_id")
+                    # Если таблица существует, пробуем добавить колонку
+                    try:
+                        await connection.execute('ALTER TABLE messages ADD COLUMN message_thread_id BIGINT')
+                        self.log("Колонка message_thread_id успешно добавлена")
+                    except Exception as e:
+                        self.log(f"Не удалось добавить колонку message_thread_id: {e}")
+                else:
+                    # Таблица не существует, создаем с нужной структурой
+                    self.log("Таблица messages не существует, создаем новую")
+                    await connection.execute('''
+                        CREATE TABLE messages (
+                            id BIGINT NOT NULL,
+                            dialog_id BIGINT NOT NULL,
+                            sender_id BIGINT,
+                            sender_name TEXT,
+                            text TEXT,
+                            date TIMESTAMP NOT NULL,
+                            account_id TEXT NOT NULL,
+                            message_thread_id BIGINT,
+                            data JSONB NOT NULL,
+                            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                            PRIMARY KEY (id, dialog_id)
+                        )
+                    ''')
+            else:
+                self.log("Колонка message_thread_id уже существует в таблице messages")
+            
+            # Таблица для кеширования тем
             await connection.execute('''
-                CREATE TABLE IF NOT EXISTS messages (
+                CREATE TABLE IF NOT EXISTS topics (
                     id BIGINT NOT NULL,
                     dialog_id BIGINT NOT NULL,
-                    sender_id BIGINT,
-                    sender_name TEXT,
-                    text TEXT,
-                    date TIMESTAMP NOT NULL,
+                    title TEXT NOT NULL,
+                    icon_color INTEGER,
+                    icon_emoji_id BIGINT,
+                    unread_count INTEGER DEFAULT 0,
+                    unread_mentions_count INTEGER DEFAULT 0,
                     account_id TEXT NOT NULL,
                     data JSONB NOT NULL,
                     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -220,7 +277,20 @@ class DatabaseHandler:
         """Кеширование сообщений диалога"""
         try:
             self.log(f"Кеширование {len(messages)} сообщений для диалога {dialog_id}")
+            
+            # Проверяем наличие колонки message_thread_id
+            column_exists = False
             async with self.connection_pool.acquire() as connection:
+                try:
+                    column_check = await connection.fetchval('''
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'messages' AND column_name = 'message_thread_id'
+                    ''')
+                    column_exists = column_check is not None
+                    self.log(f"Проверка наличия колонки message_thread_id для кеширования: {column_exists}")
+                except Exception as e:
+                    self.log(f"Ошибка при проверке колонки message_thread_id: {e}")
+                
                 async with connection.transaction():
                     for message in messages:
                         # Преобразуем данные в строку JSON с поддержкой datetime
@@ -254,26 +324,56 @@ class DatabaseHandler:
                         
                         self.log(f"Дата для сообщения ID {message['id']}: {message_date} (тип: {type(message_date)})")
                         
-                        await connection.execute('''
-                            INSERT INTO messages (id, dialog_id, sender_id, sender_name, text, date, account_id, data)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                            ON CONFLICT (id, dialog_id) 
-                            DO UPDATE SET 
-                                sender_id = $3,
-                                sender_name = $4,
-                                text = $5,
-                                date = $6,
-                                data = $8,
-                                updated_at = NOW()
-                        ''', 
-                        message['id'], 
-                        dialog_id,
-                        message.get('sender_id'),
-                        message.get('sender_name', 'Неизвестно'),
-                        message.get('text', ''),
-                        message_date,  # Теперь передаем объект datetime без timezone
-                        account_id,
-                        data_json)
+                        # Получаем ID темы сообщения, если есть
+                        message_thread_id = message.get('message_thread_id')
+                        
+                        if column_exists:
+                            # Используем SQL-запрос с колонкой message_thread_id
+                            await connection.execute('''
+                                INSERT INTO messages (id, dialog_id, sender_id, sender_name, text, date, account_id, message_thread_id, data)
+                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                                ON CONFLICT (id, dialog_id) 
+                                DO UPDATE SET 
+                                    sender_id = $3,
+                                    sender_name = $4,
+                                    text = $5,
+                                    date = $6,
+                                    message_thread_id = $8,
+                                    data = $9,
+                                    updated_at = NOW()
+                            ''', 
+                            message['id'], 
+                            dialog_id,
+                            message.get('sender_id'),
+                            message.get('sender_name', 'Неизвестно'),
+                            message.get('text', ''),
+                            message_date,
+                            account_id,
+                            message_thread_id,
+                            data_json)
+                        else:
+                            # Используем SQL-запрос без колонки message_thread_id
+                            await connection.execute('''
+                                INSERT INTO messages (id, dialog_id, sender_id, sender_name, text, date, account_id, data)
+                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                                ON CONFLICT (id, dialog_id) 
+                                DO UPDATE SET 
+                                    sender_id = $3,
+                                    sender_name = $4,
+                                    text = $5,
+                                    date = $6,
+                                    data = $8,
+                                    updated_at = NOW()
+                            ''', 
+                            message['id'], 
+                            dialog_id,
+                            message.get('sender_id'),
+                            message.get('sender_name', 'Неизвестно'),
+                            message.get('text', ''),
+                            message_date,
+                            account_id,
+                            data_json)
+            
             self.log(f"Сообщения успешно кешированы")
             return True
         except Exception as e:
@@ -298,6 +398,99 @@ class DatabaseHandler:
                 return result
         except Exception as e:
             self.log(f"Ошибка при получении кешированных сообщений: {e}")
+            return []
+    
+    async def cache_topics(self, topics: List[Dict[str, Any]], dialog_id: int, account_id: str) -> bool:
+        """Кеширование тем для супергруппы"""
+        try:
+            self.log(f"Кеширование {len(topics)} тем для диалога {dialog_id}")
+            async with self.connection_pool.acquire() as connection:
+                async with connection.transaction():
+                    for topic in topics:
+                        # Преобразуем данные в строку JSON
+                        data_json = json.dumps(topic, cls=DateTimeEncoder, ensure_ascii=False)
+                        
+                        await connection.execute('''
+                            INSERT INTO topics (id, dialog_id, title, icon_color, icon_emoji_id, unread_count, unread_mentions_count, account_id, data)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                            ON CONFLICT (id, dialog_id) 
+                            DO UPDATE SET 
+                                title = $3,
+                                icon_color = $4,
+                                icon_emoji_id = $5,
+                                unread_count = $6,
+                                unread_mentions_count = $7,
+                                data = $9,
+                                updated_at = NOW()
+                        ''', 
+                        topic['id'], 
+                        dialog_id,
+                        topic['title'],
+                        topic.get('icon_color'),
+                        topic.get('icon_emoji_id'),
+                        topic.get('unread_count', 0),
+                        topic.get('unread_mentions_count', 0),
+                        account_id,
+                        data_json)
+            self.log(f"Темы успешно кешированы")
+            return True
+        except Exception as e:
+            self.log(f"Ошибка при кешировании тем: {e}")
+            import traceback
+            self.log(traceback.format_exc())
+            return False
+            
+    async def get_cached_topics(self, dialog_id: int, account_id: str) -> List[Dict[str, Any]]:
+        """Получение кешированных тем для супергруппы"""
+        try:
+            self.log(f"Получение кешированных тем для диалога {dialog_id}")
+            async with self.connection_pool.acquire() as connection:
+                rows = await connection.fetch('''
+                    SELECT data FROM topics 
+                    WHERE dialog_id = $1 AND account_id = $2
+                    ORDER BY id
+                ''', dialog_id, account_id)
+                
+                result = [json.loads(row['data']) for row in rows]
+                self.log(f"Получено {len(result)} кешированных тем")
+                return result
+        except Exception as e:
+            self.log(f"Ошибка при получении кешированных тем: {e}")
+            import traceback
+            self.log(traceback.format_exc())
+            return []
+            
+    async def get_cached_messages_by_topic(self, dialog_id: int, topic_id: int, account_id: str) -> List[Dict[str, Any]]:
+        """Получение кешированных сообщений по теме"""
+        try:
+            self.log(f"Получение кешированных сообщений для темы {topic_id} в диалоге {dialog_id}")
+            
+            # Проверяем наличие колонки message_thread_id
+            async with self.connection_pool.acquire() as connection:
+                column_exists = await connection.fetchval('''
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'messages' AND column_name = 'message_thread_id'
+                ''')
+                
+                if not column_exists:
+                    self.log("Колонка message_thread_id не существует, возвращаем пустой список")
+                    return []
+                
+                # Если колонка существует, получаем сообщения
+                rows = await connection.fetch('''
+                    SELECT data FROM messages 
+                    WHERE dialog_id = $1 AND account_id = $2 AND message_thread_id = $3
+                    ORDER BY date DESC
+                ''', dialog_id, account_id, topic_id)
+                
+                result = [json.loads(row['data']) for row in rows]
+                self.log(f"Получено {len(result)} кешированных сообщений для темы")
+                return result
+                
+        except Exception as e:
+            self.log(f"Ошибка при получении кешированных сообщений темы: {e}")
+            import traceback
+            self.log(traceback.format_exc())
             return []
     
     async def cache_ai_interaction(self, user_query: str, context: str, model: str, 

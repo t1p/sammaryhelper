@@ -115,6 +115,10 @@ class TelegramSummarizerGUI:
         self.dialogs_container = ttk.LabelFrame(self.main_paned, text="Диалоги")
         self.main_paned.add(self.dialogs_container, weight=1)
         
+        # Средняя панель для тем
+        self.topics_container = ttk.LabelFrame(self.main_paned, text="Темы")
+        self.main_paned.add(self.topics_container, weight=1)
+        
         # Правая панель для сообщений - используем LabelFrame вместо Frame
         self.messages_container = ttk.LabelFrame(self.main_paned, text="Содержимое")
         self.main_paned.add(self.messages_container, weight=2)
@@ -187,6 +191,30 @@ class TelegramSummarizerGUI:
         
         # Добавляем обработчик выбора диалога
         self.dialogs_tree.bind('<<TreeviewSelect>>', self.on_dialog_select)
+        
+        # === НАСТРОЙКА СЕКЦИИ ТЕМ ===
+        
+        # Фрейм для списка тем с заголовком
+        self.topics_frame = ttk.LabelFrame(self.topics_container, text="Список тем")
+        self.topics_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Treeview для отображения тем
+        self.topics_tree = ttk.Treeview(self.topics_frame, columns=('id', 'title', 'unread'), show='headings')
+        self.topics_tree.heading('id', text='ID', command=lambda: self.treeview_sort_column(self.topics_tree, 'id', False))
+        self.topics_tree.heading('title', text='Название', command=lambda: self.treeview_sort_column(self.topics_tree, 'title', False))
+        self.topics_tree.heading('unread', text='Непрочитано', command=lambda: self.treeview_sort_column(self.topics_tree, 'unread', False))
+        self.topics_tree.column('id', width=50)
+        self.topics_tree.column('title', width=200)
+        self.topics_tree.column('unread', width=100)
+        
+        scrollbar = ttk.Scrollbar(self.topics_frame, orient=tk.VERTICAL, command=self.topics_tree.yview)
+        self.topics_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.topics_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Добавляем обработчик выбора темы
+        self.topics_tree.bind('<<TreeviewSelect>>', self.on_topic_select)
         
         # === НАСТРОЙКА СЕКЦИИ СООБЩЕНИЙ ===
         
@@ -964,58 +992,154 @@ db_settings = {{
         
         async def run():
             try:
-                # Проверяем, что клиент инициализирован
-                if not self.client_manager or not hasattr(self.client_manager, 'client') or not self.client_manager.client.is_connected():
-                    if not await self.client_manager.init_client():
-                        self.log("Ошибка: клиент не инициализирован")
-                        return
+                # Если выбрана тема, используем загрузку сообщений для темы
+                if hasattr(self, 'selected_topic_id') and self.selected_topic_id is not None:
+                    self.log(f"Используем выбранную тему {self.selected_topic_id} для загрузки сообщений")
+                    # Вызываем метод загрузки сообщений для темы
+                    await self.load_topic_messages_async()
+                else:
+                    # Иначе загружаем все сообщения
+                    await self.load_messages_async()
+            finally:
+                self.progress.stop()
+                self.load_messages_btn.state(['!disabled'])
+        
+        asyncio.run_coroutine_threadsafe(run(), self.loop)
+    
+    async def load_topic_messages_async(self):
+        """Асинхронная загрузка сообщений для выбранной темы"""
+        try:
+            # Проверяем, что клиент инициализирован
+            if not self.client_manager or not hasattr(self.client_manager, 'client') or not self.client_manager.client.is_connected():
+                if not await self.client_manager.init_client():
+                    self.log("Ошибка: клиент не инициализирован")
+                    return
+            
+            # Получаем ID аккаунта
+            me = await self.client_manager.client.get_me()
+            account_id = str(me.phone) if me.phone else str(me.id)
+            
+            # Проверяем кеш, если клиент использует кеширование
+            use_cache = self.client_manager.use_cache and self.client_manager.db_handler
+            
+            # Получаем фильтры от пользователя и добавляем ID темы
+            filters = {
+                'search': self.message_search_var.get(),
+                'limit': int(self.max_messages_var.get()),
+                'filter': self.message_filter_var.get(),
+                'topic_id': self.selected_topic_id
+            }
+            
+            # Логируем запрос для отладки
+            self.log(f"Загрузка сообщений для темы {self.selected_topic_id} в диалоге {self.selected_dialog_id} с фильтрами: {filters}")
+            
+            # Загружаем сообщения
+            messages = await self.client_manager.filter_messages(self.selected_dialog_id, filters)
+            
+            # Очищаем список сообщений
+            self.messages_tree.delete(*self.messages_tree.get_children())
+            
+            # Заполняем список сообщений
+            for message in messages:
+                # Проверяем тип поля date и форматируем соответственно
+                if isinstance(message['date'], str):
+                    date_str = message['date']
+                else:
+                    date_str = message['date'].strftime('%Y-%m-%d %H:%M:%S')
                 
-                # Получаем фильтры от пользователя
-                filters = {
-                    'search': self.message_search_var.get(),
-                    'limit': int(self.max_messages_var.get()),
-                    'filter': self.message_filter_var.get()
-                }
-                
-                # Логируем запрос для отладки
-                self.log(f"Загрузка сообщений для диалога {self.selected_dialog_id} с фильтрами: {filters}")
-                
-                # Загружаем сообщения
-                messages = await self.client_manager.filter_messages(self.selected_dialog_id, filters)
-                
-                # Очищаем список сообщений
-                self.messages_tree.delete(*self.messages_tree.get_children())
-                
-                # Заполняем список сообщений
-                for message in messages:
-                    # Проверяем тип поля date и форматируем соответственно
-                    if isinstance(message['date'], str):
-                        date_str = message['date']  # Если это уже строка, используем как есть
-                    else:
-                        # Если это объект datetime, форматируем его
-                        date_str = message['date'].strftime('%Y-%m-%d %H:%M:%S')
-                    
-                    self.messages_tree.insert('', 'end', values=(
-                        message['id'],
-                        message['sender_name'],
-                        message['text'][:100] + ('...' if len(message['text']) > 100 else ''),
-                        date_str
-                    ))
-                
-                # Сохраняем сообщения для последующей фильтрации
-                self.messages = messages
-                
-                self.log(f"Сообщения загружены: {len(messages)}")
-            except Exception as e:
-                self.log(f"Ошибка при загрузке сообщений: {e}")
-                import traceback
-                self.log(traceback.format_exc())
+                self.messages_tree.insert('', 'end', values=(
+                    message['id'],
+                    message['sender_name'],
+                    message['text'][:100] + ('...' if len(message['text']) > 100 else ''),
+                    date_str
+                ))
+            
+            # Сохраняем сообщения для последующей фильтрации
+            self.messages = messages
+            
+            self.log(f"Сообщения темы загружены: {len(messages)}")
+        except Exception as e:
+            self.log(f"Ошибка при загрузке сообщений темы: {e}")
+            import traceback
+            self.log(traceback.format_exc())
+
+    def load_topic_messages(self):
+        """Загрузка сообщений для выбранной темы"""
+        if not hasattr(self, 'selected_dialog_id') or self.selected_dialog_id is None:
+            self.log("Ошибка: не выбран диалог")
+            return
+            
+        if not hasattr(self, 'selected_topic_id') or self.selected_topic_id is None:
+            self.log("Ошибка: не выбрана тема")
+            return
+        
+        # Получаем выбранную тему из дерева
+        selected_items = self.topics_tree.selection()
+        if selected_items:
+            item = selected_items[0]
+            topic_values = self.topics_tree.item(item, 'values')
+            topic_title = topic_values[1]  # Название темы
+            
+            # Обновляем заголовок фрейма сообщений
+            self.messages_frame.configure(text=f"Сообщения из темы: {topic_title}")
+        
+        self.progress.start()
+        self.load_messages_btn.state(['disabled'])
+        
+        async def run():
+            try:
+                await self.load_topic_messages_async()
             finally:
                 self.progress.stop()
                 self.load_messages_btn.state(['!disabled'])
         
         asyncio.run_coroutine_threadsafe(run(), self.loop)
 
+    def update_dialogs_cache(self):
+        """Обновление кеша диалогов"""
+        self.progress.start()
+        self.update_cache_btn.state(['disabled'])
+        
+        async def run():
+            try:
+                if not self.client_manager:
+                    self.client_manager = TelegramClientManager({
+                        'config_name': self.config_var.get(),
+                        'app_dir': self.app_dir,
+                        'debug': self.debug_var.get()
+                    })
+                
+                if not await self.client_manager.init_client():
+                    self.log("Ошибка: клиент не инициализирован")
+                    return
+                
+                # Получаем лимит из настроек
+                dialog_limit = int(self.max_dialogs_var.get())
+                
+                # Применяем фильтры с force_refresh=True для обновления кеша
+                filters = {
+                    'search': '',
+                    'sort': 'name',
+                    'limit': dialog_limit,
+                    'force_refresh': True  # Принудительное обновление кеша
+                }
+                
+                self.log(f"Запуск обновления кеша диалогов с лимитом {dialog_limit}")
+                await self.client_manager.filter_dialogs(filters)
+                self.log("Кеш диалогов успешно обновлен")
+                
+                # Обновляем список диалогов
+                self.load_filtered_dialogs()
+            except Exception as e:
+                self.log(f"Ошибка при обновлении кеша диалогов: {e}")
+                import traceback
+                self.log(traceback.format_exc())
+            finally:
+                self.progress.stop()
+                self.update_cache_btn.state(['!disabled'])
+        
+        asyncio.run_coroutine_threadsafe(run(), self.loop)
+        
     def apply_filter_to_loaded_messages(self):
         """Применение фильтра к уже загруженным сообщениям"""
         self.progress.start()
@@ -1053,6 +1177,55 @@ db_settings = {{
         finally:
             self.progress.stop()
             self.filter_messages_btn.state(['!disabled'])
+
+    async def load_messages_async(self):
+        """Асинхронная загрузка сообщений для выбранного диалога"""
+        try:
+            # Проверяем, что клиент инициализирован
+            if not self.client_manager or not hasattr(self.client_manager, 'client') or not self.client_manager.client.is_connected():
+                if not await self.client_manager.init_client():
+                    self.log("Ошибка: клиент не инициализирован")
+                    return
+            
+            # Получаем фильтры от пользователя
+            filters = {
+                'search': self.message_search_var.get(),
+                'limit': int(self.max_messages_var.get()),
+                'filter': self.message_filter_var.get()
+            }
+            
+            # Логируем запрос для отладки
+            self.log(f"Загрузка сообщений для диалога {self.selected_dialog_id} с фильтрами: {filters}")
+            
+            # Загружаем сообщения
+            messages = await self.client_manager.filter_messages(self.selected_dialog_id, filters)
+            
+            # Очищаем список сообщений
+            self.messages_tree.delete(*self.messages_tree.get_children())
+            
+            # Заполняем список сообщений
+            for message in messages:
+                # Проверяем тип поля date и форматируем соответственно
+                if isinstance(message['date'], str):
+                    date_str = message['date']
+                else:
+                    date_str = message['date'].strftime('%Y-%m-%d %H:%M:%S')
+                
+                self.messages_tree.insert('', 'end', values=(
+                    message['id'],
+                    message['sender_name'],
+                    message['text'][:100] + ('...' if len(message['text']) > 100 else ''),
+                    date_str
+                ))
+            
+            # Сохраняем сообщения для последующей фильтрации
+            self.messages = messages
+            
+            self.log(f"Сообщения загружены: {len(messages)}")
+        except Exception as e:
+            self.log(f"Ошибка при загрузке сообщений: {e}")
+            import traceback
+            self.log(traceback.format_exc())
 
     def on_message_select(self, event):
         """Обработчик выбора сообщения"""
@@ -1272,87 +1445,173 @@ db_settings = {{
         tv.heading(col, command=lambda: self.treeview_sort_column(tv, col, not reverse))
 
     def on_dialog_select(self, event):
-        """Обработчик выбора диалога"""
+        """Обработка выбора диалога"""
         selected_items = self.dialogs_tree.selection()
         if not selected_items:
             return
         
-        # Получаем ID выбранного диалога
         item = selected_items[0]
-        values = self.dialogs_tree.item(item)['values']
+        dialog_values = self.dialogs_tree.item(item, 'values')
+        selected_dialog_id = dialog_values[-1]
+        selected_dialog_name = dialog_values[0]  # Название диалога
         
-        # Выводим отладочную информацию
-        self.log(f"Выбран диалог: {values}")
-        
-        # Проверяем, что values содержит достаточно элементов
-        if not values or len(values) < 5:
-            self.log(f"Ошибка: не удалось получить ID диалога из {values}")
-            return
-        
-        # ID находится в последней колонке
-        dialog_id = values[4]
-        
-        # Проверяем, что dialog_id - это число
         try:
-            dialog_id = int(dialog_id)
-        except (ValueError, TypeError):
-            self.log(f"Ошибка: некорректный ID диалога: {dialog_id}")
-            return
-        
-        self.selected_dialog_id = dialog_id
-        self.selected_dialog_name = values[0]  # Название диалога
-        
-        # Обновляем заголовки для лучшей визуализации контекста
-        self.messages_filter_frame.configure(text=f"Фильтры сообщений: {self.selected_dialog_name}")
-        self.messages_frame.configure(text=f"Сообщения из: {self.selected_dialog_name}")
-        
-        # Очищаем список сообщений
-        self.messages_tree.delete(*self.messages_tree.get_children())
-        
-        # Загружаем сообщения для выбранного диалога
-        self.load_messages()
+            # Преобразуем ID в число
+            self.selected_dialog_id = int(selected_dialog_id)
+            self.selected_dialog_name = selected_dialog_name
+            self.log(f"Выбран диалог с ID: {self.selected_dialog_id} ({selected_dialog_name})")
+            
+            # Сбрасываем выбранную тему при выборе нового диалога
+            if hasattr(self, 'selected_topic_id'):
+                self.selected_topic_id = None
+            
+            # Обновляем заголовки для лучшей визуализации контекста
+            self.messages_filter_frame.configure(text=f"Фильтры сообщений: {selected_dialog_name}")
+            self.messages_frame.configure(text=f"Сообщения из: {selected_dialog_name}")
+            self.topics_frame.configure(text=f"Темы в: {selected_dialog_name}")
+            
+            # Обновляем UI
+            self.load_messages_btn.state(['!disabled'])
+            
+            # Очищаем список сообщений при выборе нового диалога
+            self.messages_tree.delete(*self.messages_tree.get_children())
+            
+            # Очищаем список тем и проверяем, поддерживает ли чат темы
+            self.topics_tree.delete(*self.topics_tree.get_children())
+            
+            # Запускаем проверку наличия тем
+            self.check_topics_support()
+            
+        except (ValueError, IndexError) as e:
+            self.log(f"Ошибка при выборе диалога: {e}")
+            messagebox.showerror("Ошибка", f"Не удалось выбрать диалог: {e}")
+            self.selected_dialog_id = None
+            self.load_messages_btn.state(['disabled'])
 
-    def update_dialogs_cache(self):
-        """Обновление кеша диалогов"""
+    def check_topics_support(self):
+        """Проверка поддержки тем в выбранном диалоге и загрузка списка тем"""
+        if not hasattr(self, 'selected_dialog_id') or self.selected_dialog_id is None:
+            return
+            
         self.progress.start()
-        self.update_cache_btn.state(['disabled'])
         
         async def run():
             try:
-                if not self.client_manager:
-                    self.client_manager = TelegramClientManager({
-                        'config_name': self.config_var.get(),
-                        'app_dir': self.app_dir,
-                        'debug': self.debug_var.get()
-                    })
+                # Проверяем, что клиент инициализирован
+                if not self.client_manager or not hasattr(self.client_manager, 'client') or not self.client_manager.client.is_connected():
+                    if not await self.client_manager.init_client():
+                        self.log("Ошибка: клиент не инициализирован")
+                        return
                 
-                if not await self.client_manager.init_client():
-                    self.log("Ошибка: клиент не инициализирован")
-                    return
+                # Получаем ID аккаунта
+                me = await self.client_manager.client.get_me()
+                account_id = str(me.phone) if me.phone else str(me.id)
                 
-                # Получаем лимит из настроек
-                dialog_limit = int(self.max_dialogs_var.get())
+                # Проверяем, поддерживает ли чат темы
+                has_topics = await self.client_manager.has_topics(self.selected_dialog_id)
                 
-                # Применяем фильтры с force_refresh=True для обновления кеша
-                filters = {
-                    'search': '',
-                    'sort': 'name',
-                    'limit': dialog_limit,
-                    'force_refresh': True  # Принудительное обновление кеша
-                }
-                
-                self.log(f"Запуск обновления кеша диалогов с лимитом {dialog_limit}")
-                await self.client_manager.filter_dialogs(filters)
-                self.log("Кеш диалогов успешно обновлен")
-                
-                # Обновляем список диалогов
-                self.load_filtered_dialogs()
+                if has_topics:
+                    self.log(f"Диалог {self.selected_dialog_id} поддерживает темы. Загружаем список тем.")
+                    
+                    # Загружаем темы
+                    topics = await self.client_manager.get_topics(self.selected_dialog_id)
+                    
+                    # Кешируем темы, если их нашли
+                    if topics and self.client_manager.use_cache and self.client_manager.db_handler:
+                        await self.client_manager.db_handler.cache_topics(topics, self.selected_dialog_id, account_id)
+                    
+                    # Если не нашли темы, но чат поддерживает их, добавим "Общее"
+                    if not topics:
+                        self.log("Темы не найдены, но чат поддерживает их. Добавляем тему 'Общее'")
+                        topics.append({
+                            'id': 1,  # Типичный ID для общей темы
+                            'title': "Общее",
+                            'unread_count': 0
+                        })
+                    
+                    # Заполняем список тем
+                    for topic in topics:
+                        self.topics_tree.insert('', 'end', values=(
+                            topic['id'],
+                            topic['title'],
+                            topic.get('unread_count', 0)
+                        ))
+                        
+                    self.log(f"Загружено {len(topics)} тем")
+                    
+                    # Если только одна тема "Общее", сразу загружаем сообщения
+                    if len(topics) == 1 and topics[0]['title'] == "Общее":
+                        self.log("Найдена только общая тема, загружаем сообщения")
+                        # Выбираем тему "Общее"
+                        self.selected_topic_id = topics[0]['id']
+                        await self.load_messages_async()
+                    elif len(topics) == 0:
+                        self.log("Темы поддерживаются, но не найдены. Загружаем общие сообщения.")
+                        await self.load_messages_async()
+                else:
+                    self.log(f"Диалог {self.selected_dialog_id} не поддерживает темы. Загружаем сообщения напрямую.")
+                    # Загружаем сообщения напрямую
+                    await self.load_messages_async()
+                    
             except Exception as e:
-                self.log(f"Ошибка при обновлении кеша диалогов: {e}")
+                self.log(f"Ошибка при проверке поддержки тем: {e}")
                 import traceback
                 self.log(traceback.format_exc())
             finally:
                 self.progress.stop()
-                self.update_cache_btn.state(['!disabled'])
         
-        asyncio.run_coroutine_threadsafe(run(), self.loop) 
+        asyncio.run_coroutine_threadsafe(run(), self.loop)
+    
+    def on_topic_select(self, event):
+        """Обработка выбора темы"""
+        selected_items = self.topics_tree.selection()
+        if not selected_items:
+            return
+        
+        item = selected_items[0]
+        selected_topic_id = self.topics_tree.item(item, 'values')[0]
+        
+        try:
+            # Преобразуем ID в число
+            self.selected_topic_id = int(selected_topic_id)
+            self.log(f"Выбрана тема с ID: {self.selected_topic_id}")
+            
+            # Загружаем сообщения для выбранной темы
+            self.load_topic_messages()
+            
+        except (ValueError, IndexError) as e:
+            self.log(f"Ошибка при выборе темы: {e}")
+            messagebox.showerror("Ошибка", f"Не удалось выбрать тему: {e}")
+            self.selected_topic_id = None
+
+    def load_topic_messages(self):
+        """Загрузка сообщений для выбранной темы"""
+        if not hasattr(self, 'selected_dialog_id') or self.selected_dialog_id is None:
+            self.log("Ошибка: не выбран диалог")
+            return
+            
+        if not hasattr(self, 'selected_topic_id') or self.selected_topic_id is None:
+            self.log("Ошибка: не выбрана тема")
+            return
+        
+        # Получаем выбранную тему из дерева
+        selected_items = self.topics_tree.selection()
+        if selected_items:
+            item = selected_items[0]
+            topic_values = self.topics_tree.item(item, 'values')
+            topic_title = topic_values[1]  # Название темы
+            
+            # Обновляем заголовок фрейма сообщений
+            self.messages_frame.configure(text=f"Сообщения из темы: {topic_title}")
+        
+        self.progress.start()
+        self.load_messages_btn.state(['disabled'])
+        
+        async def run():
+            try:
+                await self.load_topic_messages_async()
+            finally:
+                self.progress.stop()
+                self.load_messages_btn.state(['!disabled'])
+        
+        asyncio.run_coroutine_threadsafe(run(), self.loop)
