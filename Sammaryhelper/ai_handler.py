@@ -74,11 +74,9 @@ class AIChatManager:
         user_prompt = self.settings['user_prompt']
 
         for i, chunk in enumerate(chunks):
-            chunk_prompt = f"""{user_prompt}
-
-{'\n'.join(chunk)}
-
-Краткое содержание:"""
+            chunk_prompt = user_prompt + "\n\n"
+            chunk_prompt += "\n".join(chunk)
+            chunk_prompt += "\n\nКраткое содержание:"
 
             try:
                 response = await openai_client.chat.completions.create(
@@ -94,11 +92,12 @@ class AIChatManager:
 
         if len(summaries) > 1:
             try:
-                final_prompt = f"""Объедини следующие саммари частей переписки в одно краткое и связное содержание:
-
-{''.join(f"Часть {i+1}:\n{summary}\n\n" for i, summary in enumerate(summaries))}
-
-Общее краткое содержание:"""
+                final_prompt = "Объедини следующие саммари частей переписки в одно краткое и связное содержание:\n\n"
+                
+                for i, summary in enumerate(summaries):
+                    final_prompt += f"Часть {i+1}:\n{summary}\n\n"
+                
+                final_prompt += "Общее краткое содержание:"
 
                 response = await openai_client.chat.completions.create(
                     model=self.settings['openai_model'],

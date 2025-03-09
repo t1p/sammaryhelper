@@ -20,3 +20,5 @@ Sammaryhelper/summarizer_settings.json
 .gitignore
 diff.txt
 diff2.txt
+Sammaryhelper.egg-info/
+Sammaryhelper/summarizer_settings.json
