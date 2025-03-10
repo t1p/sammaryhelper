@@ -167,6 +167,10 @@ class TelegramSummarizerGUI:
         )
         self.update_cache_btn.grid(row=2, column=2, columnspan=2, padx=5, pady=5, sticky=tk.W)
         
+        # Добавляем обработчики нажатия кнопок
+        self.load_dialogs_btn.bind("<Button-1>", lambda e: self.log("[КНОПКА] Нажата 'Загрузить диалоги'"), add="+")
+        self.update_cache_btn.bind("<Button-1>", lambda e: self.log("[КНОПКА] Нажата 'Обновить кеш'"), add="+")
+        
         # Список диалогов - делаем LabelFrame для выделения списка
         self.dialogs_frame = ttk.LabelFrame(self.dialogs_container, text="Список диалогов")
         self.dialogs_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -191,6 +195,8 @@ class TelegramSummarizerGUI:
         
         # Добавляем обработчик выбора диалога
         self.dialogs_tree.bind('<<TreeviewSelect>>', self.on_dialog_select)
+        # Добавляем дебаг вывод для выбора диалога
+        self.dialogs_tree.bind('<<TreeviewSelect>>', lambda e: self.log("[СОБЫТИЕ] Выбран диалог"), add="+")
         
         # === НАСТРОЙКА СЕКЦИИ ТЕМ ===
         
@@ -215,6 +221,8 @@ class TelegramSummarizerGUI:
         
         # Добавляем обработчик выбора темы
         self.topics_tree.bind('<<TreeviewSelect>>', self.on_topic_select)
+        # Добавляем дебаг вывод для выбора темы
+        self.topics_tree.bind('<<TreeviewSelect>>', lambda e: self.log("[СОБЫТИЕ] Выбрана тема"), add="+")
         
         # === НАСТРОЙКА СЕКЦИИ СООБЩЕНИЙ ===
         
@@ -252,9 +260,34 @@ class TelegramSummarizerGUI:
         self.max_messages_entry = ttk.Entry(self.messages_filter_frame, textvariable=self.max_messages_var, width=5)
         self.max_messages_entry.grid(row=1, column=3, padx=5, sticky=tk.W)
         
+        # Переключатель для показа всех сообщений без учета тем
+        self.show_all_messages_var = tk.BooleanVar(value=False)
+        self.show_all_messages_checkbox = ttk.Checkbutton(
+            self.messages_filter_frame, 
+            text="Показать все сообщения", 
+            variable=self.show_all_messages_var,
+            command=self.toggle_show_all_messages
+        )
+        self.show_all_messages_checkbox.grid(row=3, column=0, columnspan=4, padx=5, pady=5, sticky=tk.W)
+        
+        # Добавляем обработчик для отслеживания нажатия на чекбокс
+        self.show_all_messages_var.trace_add("write", lambda *args: self.log(f"[ПЕРЕКЛЮЧАТЕЛЬ] Изменено состояние 'Показать все сообщения': {self.show_all_messages_var.get()}"))
+        
         # Кнопка для загрузки сообщений
         self.load_messages_btn = ttk.Button(self.messages_filter_frame, text="Сообщения", command=self.load_messages)
-        self.load_messages_btn.grid(row=2, column=0, columnspan=4, padx=5, pady=5, sticky=tk.W)
+        self.load_messages_btn.grid(row=4, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
+        
+        # Кнопка для применения фильтров к загруженным сообщениям
+        self.filter_messages_btn = ttk.Button(
+            self.messages_filter_frame, 
+            text="Применить фильтры", 
+            command=self.apply_filter_to_loaded_messages
+        )
+        self.filter_messages_btn.grid(row=4, column=2, columnspan=2, padx=5, pady=5, sticky=tk.E)
+        
+        # Добавляем обработчики нажатия кнопок
+        self.load_messages_btn.bind("<Button-1>", lambda e: self.log("[КНОПКА] Нажата 'Сообщения'"), add="+")
+        self.filter_messages_btn.bind("<Button-1>", lambda e: self.log("[КНОПКА] Нажата 'Применить фильтры'"), add="+")
         
         # Создаем PanedWindow для списка сообщений и просмотра текста
         self.messages_content_paned = ttk.PanedWindow(self.messages_top_frame, orient=tk.VERTICAL)
@@ -985,24 +1018,32 @@ db_settings = {{
             self.log("Ошибка: не выбран диалог")
             return
         
-        self.log(f"Загрузка сообщений для диалога ID: {self.selected_dialog_id}")
+        self.log(f"[СООБЩЕНИЯ] Загрузка сообщений для диалога ID: {self.selected_dialog_id}")
         
         self.progress.start()
         self.load_messages_btn.state(['disabled'])
         
         async def run():
             try:
-                # Если выбрана тема, используем загрузку сообщений для темы
-                if hasattr(self, 'selected_topic_id') and self.selected_topic_id is not None:
-                    self.log(f"Используем выбранную тему {self.selected_topic_id} для загрузки сообщений")
+                # Проверяем режим отображения всех сообщений
+                show_all = self.show_all_messages_var.get()
+                
+                # Если выбрана тема и не включен режим "показать все", используем загрузку сообщений для темы
+                if hasattr(self, 'selected_topic_id') and self.selected_topic_id is not None and not show_all:
+                    self.log(f"[СООБЩЕНИЯ] Используем выбранную тему {self.selected_topic_id} для загрузки сообщений")
                     # Вызываем метод загрузки сообщений для темы
                     await self.load_topic_messages_async()
                 else:
                     # Иначе загружаем все сообщения
+                    if show_all:
+                        self.log("[СООБЩЕНИЯ] Режим показа всех сообщений активен, игнорируем выбранную тему")
+                    else:
+                        self.log("[СООБЩЕНИЯ] Тема не выбрана, загружаем обычные сообщения")
                     await self.load_messages_async()
             finally:
                 self.progress.stop()
                 self.load_messages_btn.state(['!disabled'])
+                self.log("[СООБЩЕНИЯ] Загрузка сообщений завершена")
         
         asyncio.run_coroutine_threadsafe(run(), self.loop)
     
@@ -1023,15 +1064,18 @@ db_settings = {{
             use_cache = self.client_manager.use_cache and self.client_manager.db_handler
             
             # Получаем фильтры от пользователя и добавляем ID темы
+            limit = int(self.max_messages_var.get())
+            self.log(f"[ТЕМА_СООБЩЕНИЯ] Запрошен лимит: {limit} сообщений")
+            
             filters = {
                 'search': self.message_search_var.get(),
-                'limit': int(self.max_messages_var.get()),
+                'limit': limit,
                 'filter': self.message_filter_var.get(),
                 'topic_id': self.selected_topic_id
             }
             
             # Логируем запрос для отладки
-            self.log(f"Загрузка сообщений для темы {self.selected_topic_id} в диалоге {self.selected_dialog_id} с фильтрами: {filters}")
+            self.log(f"[ТЕМА_СООБЩЕНИЯ] Загрузка сообщений для темы {self.selected_topic_id} в диалоге {self.selected_dialog_id} с фильтрами: {filters}")
             
             # Загружаем сообщения
             messages = await self.client_manager.filter_messages(self.selected_dialog_id, filters)
@@ -1040,29 +1084,42 @@ db_settings = {{
             self.messages_tree.delete(*self.messages_tree.get_children())
             
             # Заполняем список сообщений
-            for message in messages:
+            for i, message in enumerate(messages):
                 # Проверяем тип поля date и форматируем соответственно
                 if isinstance(message['date'], str):
                     date_str = message['date']
                 else:
                     date_str = message['date'].strftime('%Y-%m-%d %H:%M:%S')
                 
-                self.messages_tree.insert('', 'end', values=(
+                # Добавляем в Treeview
+                item_id = self.messages_tree.insert('', 'end', values=(
                     message['id'],
                     message['sender_name'],
                     message['text'][:100] + ('...' if len(message['text']) > 100 else ''),
                     date_str
                 ))
+                
+                # Логируем добавление для последних 2 сообщений
+                if i >= len(messages) - 2:
+                    self.log(f"[ТЕМА_СООБЩЕНИЯ] Добавлено в Treeview сообщение #{i+1}: id={message['id']}, item_id={item_id}")
             
             # Сохраняем сообщения для последующей фильтрации
             self.messages = messages
             
-            self.log(f"Сообщения темы загружены: {len(messages)}")
+            self.log(f"[ТЕМА_СООБЩЕНИЯ] Всего загружено сообщений темы: {len(messages)}")
+            self.log(f"[ТЕМА_СООБЩЕНИЯ] Количество отображаемых сообщений: {len(self.messages_tree.get_children())}")
+            
+            # Отображаем последнее сообщение (прокручиваем список вниз)
+            if self.messages_tree.get_children():
+                last_item = self.messages_tree.get_children()[-1]
+                self.messages_tree.see(last_item)
+                self.log(f"[ТЕМА_СООБЩЕНИЯ] Прокручиваем к последнему сообщению ID: {self.messages_tree.item(last_item, 'values')[0]}")
+            
         except Exception as e:
             self.log(f"Ошибка при загрузке сообщений темы: {e}")
             import traceback
             self.log(traceback.format_exc())
-
+    
     def load_topic_messages(self):
         """Загрузка сообщений для выбранной темы"""
         if not hasattr(self, 'selected_dialog_id') or self.selected_dialog_id is None:
@@ -1071,6 +1128,13 @@ db_settings = {{
             
         if not hasattr(self, 'selected_topic_id') or self.selected_topic_id is None:
             self.log("Ошибка: не выбрана тема")
+            return
+        
+        # Проверяем режим отображения всех сообщений
+        show_all = self.show_all_messages_var.get()
+        if show_all:
+            self.log(f"[ТЕМА_СООБЩЕНИЯ] Режим показа всех сообщений активен. Загружаем все сообщения вместо темы.")
+            self.load_messages()
             return
         
         # Получаем выбранную тему из дерева
@@ -1082,16 +1146,19 @@ db_settings = {{
             
             # Обновляем заголовок фрейма сообщений
             self.messages_frame.configure(text=f"Сообщения из темы: {topic_title}")
+            self.log(f"[ТЕМА_СООБЩЕНИЯ] Обновлен заголовок: Сообщения из темы: {topic_title}")
         
         self.progress.start()
         self.load_messages_btn.state(['disabled'])
         
         async def run():
             try:
+                self.log(f"[ТЕМА_СООБЩЕНИЯ] Начинаем загрузку сообщений темы {self.selected_topic_id}")
                 await self.load_topic_messages_async()
             finally:
                 self.progress.stop()
                 self.load_messages_btn.state(['!disabled'])
+                self.log(f"[ТЕМА_СООБЩЕНИЯ] Завершена загрузка сообщений темы {self.selected_topic_id}")
         
         asyncio.run_coroutine_threadsafe(run(), self.loop)
 
@@ -1459,11 +1526,17 @@ db_settings = {{
             # Преобразуем ID в число
             self.selected_dialog_id = int(selected_dialog_id)
             self.selected_dialog_name = selected_dialog_name
-            self.log(f"Выбран диалог с ID: {self.selected_dialog_id} ({selected_dialog_name})")
+            self.log(f"[ДИАЛОГ] Выбран диалог с ID: {self.selected_dialog_id} ({selected_dialog_name})")
             
             # Сбрасываем выбранную тему при выборе нового диалога
             if hasattr(self, 'selected_topic_id'):
+                self.log(f"[ДИАЛОГ] Сброс выбранной темы (была: {self.selected_topic_id})")
                 self.selected_topic_id = None
+                
+            # Сбрасываем режим "показать все сообщения"
+            if self.show_all_messages_var.get():
+                self.log(f"[ДИАЛОГ] Сброс режима 'показать все сообщения'")
+                self.show_all_messages_var.set(False)
             
             # Обновляем заголовки для лучшей визуализации контекста
             self.messages_filter_frame.configure(text=f"Фильтры сообщений: {selected_dialog_name}")
@@ -1487,7 +1560,39 @@ db_settings = {{
             messagebox.showerror("Ошибка", f"Не удалось выбрать диалог: {e}")
             self.selected_dialog_id = None
             self.load_messages_btn.state(['disabled'])
-
+    
+    def on_topic_select(self, event):
+        """Обработка выбора темы"""
+        selected_items = self.topics_tree.selection()
+        if not selected_items:
+            return
+        
+        item = selected_items[0]
+        values = self.topics_tree.item(item, 'values')
+        selected_topic_id = values[0]
+        selected_topic_title = values[1]
+        
+        try:
+            # Преобразуем ID в число
+            self.selected_topic_id = int(selected_topic_id)
+            self.log(f"[ТЕМА] Выбрана тема с ID: {self.selected_topic_id}, название: '{selected_topic_title}'")
+            
+            # Проверяем режим отображения всех сообщений
+            show_all = self.show_all_messages_var.get()
+            if show_all:
+                self.log(f"[ТЕМА] Режим показа всех сообщений активен. Выбор темы не влияет на отображение.")
+                # Обновляем только заголовок, чтобы показать что тема выбрана
+                self.topics_frame.configure(text=f"Темы в: {self.selected_dialog_name} (Выбрано: {selected_topic_title})")
+                return
+            
+            # Загружаем сообщения для выбранной темы
+            self.load_topic_messages()
+            
+        except (ValueError, IndexError) as e:
+            self.log(f"Ошибка при выборе темы: {e}")
+            messagebox.showerror("Ошибка", f"Не удалось выбрать тему: {e}")
+            self.selected_topic_id = None
+    
     def check_topics_support(self):
         """Проверка поддержки тем в выбранном диалоге и загрузка списка тем"""
         if not hasattr(self, 'selected_dialog_id') or self.selected_dialog_id is None:
@@ -1561,57 +1666,50 @@ db_settings = {{
                 self.progress.stop()
         
         asyncio.run_coroutine_threadsafe(run(), self.loop)
-    
-    def on_topic_select(self, event):
-        """Обработка выбора темы"""
-        selected_items = self.topics_tree.selection()
-        if not selected_items:
-            return
-        
-        item = selected_items[0]
-        selected_topic_id = self.topics_tree.item(item, 'values')[0]
-        
-        try:
-            # Преобразуем ID в число
-            self.selected_topic_id = int(selected_topic_id)
-            self.log(f"Выбрана тема с ID: {self.selected_topic_id}")
-            
-            # Загружаем сообщения для выбранной темы
-            self.load_topic_messages()
-            
-        except (ValueError, IndexError) as e:
-            self.log(f"Ошибка при выборе темы: {e}")
-            messagebox.showerror("Ошибка", f"Не удалось выбрать тему: {e}")
-            self.selected_topic_id = None
 
-    def load_topic_messages(self):
-        """Загрузка сообщений для выбранной темы"""
-        if not hasattr(self, 'selected_dialog_id') or self.selected_dialog_id is None:
-            self.log("Ошибка: не выбран диалог")
-            return
+    def toggle_show_all_messages(self):
+        """Обработчик переключения режима отображения всех сообщений"""
+        show_all = self.show_all_messages_var.get()
+        self.log(f"[РЕЖИМ] {'Включен' if show_all else 'Выключен'} режим показа всех сообщений")
+        
+        # Обновляем визуальную индикацию режима
+        if show_all:
+            # Изменяем заголовок панели сообщений и добавляем визуальную индикацию режима
+            self.messages_frame.configure(text=f"Сообщения из: {self.selected_dialog_name} (ВСЕ СООБЩЕНИЯ)")
             
-        if not hasattr(self, 'selected_topic_id') or self.selected_topic_id is None:
-            self.log("Ошибка: не выбрана тема")
-            return
-        
-        # Получаем выбранную тему из дерева
-        selected_items = self.topics_tree.selection()
-        if selected_items:
-            item = selected_items[0]
-            topic_values = self.topics_tree.item(item, 'values')
-            topic_title = topic_values[1]  # Название темы
+            # Если есть выбранная тема, обновляем заголовок, чтобы показать выбор
+            if hasattr(self, 'selected_topic_id') and self.selected_topic_id is not None:
+                # Находим название темы
+                selected_topic_title = "Неизвестная тема"
+                for item_id in self.topics_tree.get_children():
+                    item_values = self.topics_tree.item(item_id, 'values')
+                    if str(item_values[0]) == str(self.selected_topic_id):
+                        selected_topic_title = item_values[1]
+                        break
+                
+                self.topics_frame.configure(text=f"Темы в: {self.selected_dialog_name} (Выбрано: {selected_topic_title})")
+        else:
+            # Возвращаем стандартный заголовок
+            if hasattr(self, 'selected_dialog_name'):
+                self.messages_frame.configure(text=f"Сообщения из: {self.selected_dialog_name}")
+                self.topics_frame.configure(text=f"Темы в: {self.selected_dialog_name}")
+            else:
+                self.messages_frame.configure(text="Сообщения")
+                self.topics_frame.configure(text="Темы")
             
-            # Обновляем заголовок фрейма сообщений
-            self.messages_frame.configure(text=f"Сообщения из темы: {topic_title}")
+            # Если есть выбранная тема, обновляем заголовок с темой
+            if hasattr(self, 'selected_topic_id') and self.selected_topic_id is not None:
+                # Находим название темы
+                selected_topic_title = "Неизвестная тема"
+                for item_id in self.topics_tree.get_children():
+                    item_values = self.topics_tree.item(item_id, 'values')
+                    if str(item_values[0]) == str(self.selected_topic_id):
+                        selected_topic_title = item_values[1]
+                        break
+                
+                self.messages_frame.configure(text=f"Сообщения из темы: {selected_topic_title}")
         
-        self.progress.start()
-        self.load_messages_btn.state(['disabled'])
-        
-        async def run():
-            try:
-                await self.load_topic_messages_async()
-            finally:
-                self.progress.stop()
-                self.load_messages_btn.state(['!disabled'])
-        
-        asyncio.run_coroutine_threadsafe(run(), self.loop)
+        # Если включен режим показа всех сообщений и диалог выбран, загружаем все сообщения
+        if show_all and hasattr(self, 'selected_dialog_id') and self.selected_dialog_id:
+            self.log(f"[РЕЖИМ] Загружаем все сообщения для диалога {self.selected_dialog_id}")
+            self.load_messages()

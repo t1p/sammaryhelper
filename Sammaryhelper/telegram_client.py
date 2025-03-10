@@ -400,12 +400,21 @@ class TelegramClientManager:
                 # Получаем ID сообщений для данной темы из истории чата
                 thread_messages = []
                 message_count = 0
-                total_limit = filters.get('limit', 100) * 3  # Увеличиваем лимит для поиска
+                # Увеличиваем лимит в 5 раз для гарантированного получения всех сообщений 
+                total_limit = filters.get('limit', 100) * 5  
                 
                 self.log(f"Сканирую сообщения для поиска темы {topic_id}, лимит: {total_limit}")
+                
+                # Создаем список сообщений
+                all_messages = []
                 async for msg in self.client.iter_messages(chat_id, limit=total_limit):
                     message_count += 1
-                    
+                    all_messages.append(msg)
+                
+                self.log(f"Получено всего {len(all_messages)} сообщений для анализа")
+                
+                # Анализируем все сообщения для поиска темы
+                for msg in all_messages:
                     # Выводим отладочную информацию для первых 5 сообщений
                     if message_count <= 5:
                         self.log(f"Сообщение #{message_count}: id={msg.id}")
@@ -443,6 +452,8 @@ class TelegramClientManager:
                             thread_messages.append(msg)
                 
                 self.log(f"Найдено {len(thread_messages)} сообщений для темы {topic_id} из {message_count} проверенных")
+                self.log(f"ID первых 5 сообщений темы: {[msg.id for msg in thread_messages[:5]]}")
+                self.log(f"ID последних 5 сообщений темы: {[msg.id for msg in thread_messages[-5:] if len(thread_messages) >= 5]}")
                 
                 # Если не удалось найти сообщения по теме, используем все сообщения
                 if not thread_messages:
@@ -467,11 +478,18 @@ class TelegramClientManager:
                     self.log(f"Вместо сообщений темы возвращаю {len(thread_messages)} обычных сообщений")
                 
                 messages = []
+                processed_count = 0
+                
+                # Для устранения проблемы с последними двумя сообщениями
+                # 1. Не ограничиваем количество сообщений при обработке
+                # 2. Выводим подробную информацию о процессе
+                
                 for message in thread_messages:
-                    # Пропускаем, если уже достигнут лимит
-                    if len(messages) >= filters.get('limit', 100):
-                        break
-                        
+                    processed_count += 1
+                    # Раньше мы пропускали сообщения, если достигнут лимит, теперь обрабатываем все
+                    # if len(messages) >= filters.get('limit', 100):
+                    #    break
+                    
                     sender_name = "Неизвестно"
                     sender_id = message.sender_id
                     
@@ -524,7 +542,16 @@ class TelegramClientManager:
                     
                     messages.append(message_data)
                 
+                # Теперь ограничиваем количество сообщений после обработки всех
+                user_limit = filters.get('limit', 100)
+                if len(messages) > user_limit:
+                    self.log(f"Ограничиваем количество сообщений до {user_limit} (было {len(messages)})")
+                    messages = messages[:user_limit]
+                
+                self.log(f"Обработано {processed_count} из {len(thread_messages)} сообщений темы")
                 self.log(f"После применения фильтров получено {len(messages)} сообщений для темы {topic_id}")
+                self.log(f"ID первых 5 сообщений: {[msg['id'] for msg in messages[:5]]}")
+                self.log(f"ID последних 5 сообщений: {[msg['id'] for msg in messages[-5:] if len(messages) >= 5]}")
                 
                 # Кешируем результаты, если используется кеширование
                 if self.use_cache and self.db_handler and messages:
