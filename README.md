@@ -85,4 +85,4 @@ python -m Sammaryhelper.main
   ```
 
 ## Лицензия
-[Указать информацию о лицензии]
+AGPL-3.0
