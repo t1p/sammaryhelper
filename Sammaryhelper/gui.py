@@ -13,6 +13,9 @@ from telethon.tl.types import Channel  # Добавляем импорт в на
 from telethon import TelegramClient
 import json
 
+# Примечание: Создание директории configs теперь является ответственностью DatabaseHandler
+# и больше не обрабатывается в GUI. Это обеспечивает правильное разделение ответственности.
+
 class TelegramSummarizerGUI:
     def __init__(self, root):
         self.root = root
@@ -69,7 +72,7 @@ class TelegramSummarizerGUI:
         self.save_settings()
         
         self.client_manager = TelegramClientManager({
-            'config_name': config_name,
+            'config_name': self.config_var.get(),
             'app_dir': self.app_dir,
             'debug': self.debug_var.get(),
             'config_format': 'json',
@@ -326,10 +329,13 @@ class TelegramSummarizerGUI:
         
         # Получаем список JSON и PY-файлов конфигурации
         configs_dir = os.path.join(self.app_dir, "configs")
-        os.makedirs(configs_dir, exist_ok=True)  # Создаем директорию если не существует
-        
-        config_files = [f.split('.')[0] for f in os.listdir(configs_dir) 
-                        if f.endswith(('.json', '.py'))]
+        config_files = []
+        try:
+            config_files = [f.split('.')[0] for f in os.listdir(configs_dir) 
+                            if f.endswith(('.json', '.py'))]
+        except FileNotFoundError:
+            self.log("Директория configs не существует. Будет создана DatabaseHandler'ом при необходимости.")
+            
         self.config_combo['values'] = config_files
         
         # Устанавливаем значение по умолчанию, если оно есть
@@ -651,12 +657,27 @@ class TelegramSummarizerGUI:
                             await self.client_manager.client.disconnect()
                 
                 # Создаем новый клиент
+                # Загружаем конфигурацию для передачи настроек БД
+                config_name = self.config_var.get()
+                json_config_path = os.path.join(self.app_dir, "configs", f"{config_name}.json")
+                py_config_path = os.path.join(self.app_dir, "configs", f"{config_name}.py")
+                
+                db_settings = None
+                if os.path.exists(json_config_path):
+                    with open(json_config_path, 'r', encoding='utf-8') as f:
+                        config_data = json.load(f)
+                        db_settings = config_data.get('db_settings', None)
+                elif os.path.exists(py_config_path):
+                    config = load_config(py_config_path)
+                    db_settings = getattr(config, 'db_settings', None)
+                
                 self.client_manager = TelegramClientManager({
                     'config_name': config_name,
                     'app_dir': self.app_dir,
                     'debug': self.debug_var.get(),
                     'config_format': 'json',
-                    'configs_in_parent_dir': False
+                    'configs_in_parent_dir': False,
+                    'db_settings': db_settings
                 })
                 
                 # Очищаем список диалогов
@@ -816,14 +837,15 @@ class TelegramSummarizerGUI:
         self.log(f"Диалоги отфильтрованы: {len(filtered_dialogs)}")
 
     def load_current_config(self):
-        """Загрузка текущего конфига из JSON-файла"""
+        """Загрузка текущего конфига из JSON-файла или Python-модуля"""
         try:
             config_name = self.config_var.get()
-            config_path = os.path.join(self.app_dir, "configs", f"{config_name}.json")
+            json_config_path = os.path.join(self.app_dir, "configs", f"{config_name}.json")
+            py_config_path = os.path.join(self.app_dir, "configs", f"{config_name}.py")
             
-            # Пробуем загрузить конфиг из JSON
-            if os.path.exists(config_path):
-                with open(config_path, 'r', encoding='utf-8') as f:
+            # Сначала пробуем загрузить конфиг из JSON
+            if os.path.exists(json_config_path):
+                with open(json_config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                     
                 # Заполняем поля значениями из конфига
@@ -847,8 +869,38 @@ class TelegramSummarizerGUI:
                     self.db_name_var.set(db_settings.get('database', 'telegram_summarizer'))
                     self.db_user_var.set(db_settings.get('user', 'postgres'))
                     self.db_password_var.set(db_settings.get('password', 'postgres'))
+                
+                self.log(f"Конфиг {config_name}.json успешно загружен")
+                
+            # Если JSON не найден, пробуем загрузить Python-модуль
+            elif os.path.exists(py_config_path):
+                config = load_config(py_config_path)
+                
+                # Заполняем поля значениями из Python-модуля
+                self.api_id_var.set(str(getattr(config, 'api_id', '')))
+                self.api_hash_var.set(getattr(config, 'api_hash', ''))
+                self.openai_key_var.set(getattr(config, 'openai_api_key', ''))
+                
+                # Настройки прокси
+                self.use_proxy_var.set(getattr(config, 'use_proxy', False))
+                if hasattr(config, 'proxy_settings'):
+                    self.proxy_type_var.set(config.proxy_settings.get('proxy_type', 'socks5'))
+                    self.proxy_host_var.set(config.proxy_settings.get('proxy_host', ''))
+                    self.proxy_port_var.set(str(config.proxy_settings.get('proxy_port', '')))
+                
+                # Загружаем настройки базы данных
+                if hasattr(config, 'db_settings'):
+                    db_settings = config.db_settings
+                    self.db_host_var.set(db_settings.get('host', 'localhost'))
+                    self.db_port_var.set(str(db_settings.get('port', 5432)))
+                    self.db_name_var.set(db_settings.get('database', 'telegram_summarizer'))
+                    self.db_user_var.set(db_settings.get('user', 'postgres'))
+                    self.db_password_var.set(db_settings.get('password', 'postgres'))
+                
+                self.log(f"Конфиг {config_name}.py успешно загружен")
+                
             else:
-                self.log(f"Конфиг {config_name}.json не найден. Проверьте наличие файла.")
+                self.log(f"Конфиг {config_name} не найден. Проверьте наличие файла .json или .py")
                 
         except Exception as e:
             self.log(f"Ошибка при загрузке конфига: {e}")
@@ -936,10 +988,16 @@ class TelegramSummarizerGUI:
                 if 'openai_api_key' not in self.settings:
                     # Получаем API ключ из конфига
                     config_name = self.config_var.get()
-                    config_path = os.path.join(self.app_dir, "configs", f"{config_name}.json")
-                    with open(config_path, 'r', encoding='utf-8') as f:
-                        config_data = json.load(f)
-                    self.settings['openai_api_key'] = config_data['openai_api_key']
+                    json_config_path = os.path.join(self.app_dir, "configs", f"{config_name}.json")
+                    py_config_path = os.path.join(self.app_dir, "configs", f"{config_name}.py")
+                    
+                    if os.path.exists(json_config_path):
+                        with open(json_config_path, 'r', encoding='utf-8') as f:
+                            config_data = json.load(f)
+                        self.settings['openai_api_key'] = config_data['openai_api_key']
+                    elif os.path.exists(py_config_path):
+                        config = load_config(py_config_path)
+                        self.settings['openai_api_key'] = getattr(config, 'openai_api_key', '')
                 
                 # Получаем ответ от ИИ
                 response = await self.ai_manager.get_response(

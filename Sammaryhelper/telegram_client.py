@@ -103,9 +103,9 @@ class TelegramClientManager:
             session_name = os.path.join(sessions_dir, self.config_name)
 
             # Настройки прокси
-            proxy_settings = None
+            proxy = None
             if use_proxy and proxy_settings:
-                proxy_settings = (
+                proxy = (
                     proxy_settings['proxy_type'],
                     proxy_settings['proxy_host'],
                     proxy_settings['proxy_port']
@@ -116,7 +116,7 @@ class TelegramClientManager:
                 session_name,
                 api_id,
                 api_hash,
-                proxy=proxy_settings,
+                proxy=proxy,
                 system_version=self.system_version,
                 device_model=self.device_model,
                 app_version=self.app_version

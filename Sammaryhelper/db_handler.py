@@ -26,17 +26,45 @@ class DatabaseHandler:
         """Инициализация обработчика базы данных"""
         self.connection_pool = None
         self.debug = debug
-        self.app_dir = app_dir or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.app_dir = app_dir or os.path.dirname(os.path.abspath(__file__))
         self.config_name = config_name or 'config_0707'  # Используем имя конфига по умолчанию
         self.config = self._load_config()
+        # Сохраняем настройки БД для совместимости
+        self.db_config = self._extract_db_settings(self.config)
         
     def log(self, message):
         """Логирование сообщений"""
         if self.debug:
             print(f"[DB] {message}")
     
+    def _extract_db_settings(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Извлекаем настройки БД из полной конфигурации"""
+        # Если db_settings существует в конфиге, используем его
+        if isinstance(config, dict) and 'db_settings' in config:
+            return config['db_settings']
+            
+        # Если это словарь с ключами базы данных, предполагаем, что это настройки БД
+        db_keys = ['host', 'port', 'database', 'user', 'password']
+        if isinstance(config, dict) and all(key in config for key in db_keys):
+            return {
+                "host": config.get("host", "localhost"),
+                "port": config.get("port", 5432),
+                "database": config.get("database", "telegram_summarizer"),
+                "user": config.get("user", "postgres"),
+                "password": config.get("password", "postgres")
+            }
+            
+        # Если не можем найти настройки БД, возвращаем значения по умолчанию
+        return {
+            "host": "localhost",
+            "port": 5432,
+            "database": "telegram_summarizer",
+            "user": "postgres",
+            "password": "postgres"
+        }
+    
     def _load_config(self) -> Dict[str, Any]:
-        """Загрузка конфигурации подключения к БД из основного конфига"""
+        """Загрузка полной конфигурации, включая настройки БД"""
         try:
             # Проверяем существование директории app_dir
             if not os.path.isdir(self.app_dir):
@@ -50,15 +78,16 @@ class DatabaseHandler:
                     # Импортируем модуль конфигурации
                     import importlib.util
                     spec = importlib.util.spec_from_file_location("config", py_config_path)
-                    config = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(config)
+                    config_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(config_module)
                     
-                    # Проверяем, есть ли настройки базы данных в конфиге
-                    if hasattr(config, 'db_settings'):
-                        self.log(f"Загружены настройки БД из Python-конфига: {py_config_path}")
-                        return config.db_settings
-                    else:
-                        self.log(f"В Python-конфиге отсутствуют настройки БД, пробуем JSON-конфиг")
+                    # Создаем словарь из всех атрибутов модуля конфигурации
+                    config = {attr: getattr(config_module, attr) 
+                             for attr in dir(config_module) 
+                             if not attr.startswith('__')}
+                    
+                    self.log(f"Загружена полная конфигурация из Python-конфига: {py_config_path}")
+                    return config
                 except Exception as e:
                     self.log(f"Ошибка при загрузке Python-конфига: {e}")
             
@@ -68,7 +97,7 @@ class DatabaseHandler:
                 try:
                     with open(json_config_path, 'r', encoding='utf-8') as f:
                         config_data = json.load(f)
-                    self.log(f"Загружены настройки БД из JSON-конфига: {json_config_path}")
+                    self.log(f"Загружена полная конфигурация из JSON-конфига: {json_config_path}")
                     return config_data
                 except Exception as e:
                     self.log(f"Ошибка при загрузке JSON-конфига: {e}")
@@ -79,19 +108,25 @@ class DatabaseHandler:
                 try:
                     with open(legacy_config_path, 'r', encoding='utf-8') as f:
                         config_data = json.load(f)
-                    self.log(f"Загружены настройки БД из устаревшего конфига: {legacy_config_path}")
-                    return config_data
+                    self.log(f"Загружена конфигурация из устаревшего конфига: {legacy_config_path}")
+                    # В устаревшем конфиге хранятся только настройки БД, помещаем их в подраздел
+                    return {"db_settings": config_data}
                 except Exception as e:
                     self.log(f"Ошибка при загрузке устаревшего конфига: {e}")
             
             # Если ни один конфиг не найден, создаем JSON-конфиг по умолчанию
             self.log(f"Конфигурационный файл не найден, создаем файл по умолчанию")
             default_config = {
-                "host": "localhost",
-                "port": 5432,
-                "database": "telegram_summarizer", 
-                "user": "postgres",
-                "password": "postgres"
+                "db_settings": {
+                    "host": "localhost",
+                    "port": 5432,
+                    "database": "telegram_summarizer", 
+                    "user": "postgres",
+                    "password": "postgres"
+                },
+                "version": "1.0",
+                "debug": False,
+                "cache_enabled": True
             }
             
             try:
@@ -108,18 +143,23 @@ class DatabaseHandler:
                 self.log(f"Ошибка при создании файла конфигурации по умолчанию: {e}")
             
             # Возвращаем значения по умолчанию, если всё остальное не сработало
-            self.log("Используем настройки БД по умолчанию")
+            self.log("Используем настройки по умолчанию")
             return default_config
             
         except Exception as e:
-            self.log(f"Критическая ошибка при загрузке конфигурации БД: {e}")
+            self.log(f"Критическая ошибка при загрузке конфигурации: {e}")
             # Возвращаем значения по умолчанию
             return {
-                "host": "localhost",
-                "port": 5432,
-                "database": "telegram_summarizer",
-                "user": "postgres", 
-                "password": "postgres"
+                "db_settings": {
+                    "host": "localhost",
+                    "port": 5432,
+                    "database": "telegram_summarizer",
+                    "user": "postgres", 
+                    "password": "postgres"
+                },
+                "version": "1.0",
+                "debug": False,
+                "cache_enabled": True
             }
     
     async def init_connection(self) -> bool:
@@ -129,13 +169,13 @@ class DatabaseHandler:
             return False
             
         try:
-            self.log(f"Подключение к базе данных: {self.config.get('host')}:{self.config.get('port')}/{self.config.get('database')}")
+            self.log(f"Подключение к базе данных: {self.db_config.get('host')}:{self.db_config.get('port')}/{self.db_config.get('database')}")
             self.connection_pool = await asyncpg.create_pool(
-                host=self.config.get("host"),
-                port=self.config.get("port"),
-                database=self.config.get("database"),
-                user=self.config.get("user"),
-                password=self.config.get("password")
+                host=self.db_config.get("host"),
+                port=self.db_config.get("port"),
+                database=self.db_config.get("database"),
+                user=self.db_config.get("user"),
+                password=self.db_config.get("password")
             )
             
             self.log("Подключение к базе данных успешно установлено")
