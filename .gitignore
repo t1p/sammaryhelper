@@ -15,10 +15,9 @@ logs/
 # 
 Sammaryhelper/configs/
 Sammaryhelper/sessions/
-Sammaryhelper/summarizer_settings.json
 .vscode/
 .gitignore
-diff.txt
-diff2.txt
 Sammaryhelper.egg-info/
 Sammaryhelper/summarizer_settings.json
+.roomodes
+.git/

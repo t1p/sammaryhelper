@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import asyncio
 import threading
+import datetime
 from functools import partial
 from typing import List, Dict, Any
 from .telegram_client import TelegramClientManager
@@ -133,6 +134,11 @@ class TelegramSummarizerGUI:
         self.dialogs_filter_frame = ttk.LabelFrame(self.dialogs_container, text="Фильтры диалогов")
         self.dialogs_filter_frame.pack(fill=tk.X, padx=5, pady=5)
         
+        # Добавляем информацию о множественном выборе
+        self.selected_dialogs_var = tk.StringVar(value="Выбрано диалогов: 0")
+        self.selected_dialogs_label = ttk.Label(self.dialogs_filter_frame, textvariable=self.selected_dialogs_var)
+        self.selected_dialogs_label.grid(row=0, column=4, padx=5, pady=5, sticky=tk.E)
+        
         # Поле поиска для диалогов
         ttk.Label(self.dialogs_filter_frame, text="Поиск диалогов:").grid(row=0, column=0, padx=5, sticky=tk.W)
         self.dialog_search_var = tk.StringVar()
@@ -175,7 +181,7 @@ class TelegramSummarizerGUI:
         self.dialogs_frame = ttk.LabelFrame(self.dialogs_container, text="Список диалогов")
         self.dialogs_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        self.dialogs_tree = ttk.Treeview(self.dialogs_frame, columns=('name', 'type', 'folder', 'unread', 'id'), show='headings')
+        self.dialogs_tree = ttk.Treeview(self.dialogs_frame, columns=('name', 'type', 'folder', 'unread', 'id'), show='headings', selectmode='extended')
         self.dialogs_tree.heading('name', text='Название', command=lambda: self.treeview_sort_column(self.dialogs_tree, 'name', False))
         self.dialogs_tree.heading('type', text='Тип', command=lambda: self.treeview_sort_column(self.dialogs_tree, 'type', False))
         self.dialogs_tree.heading('folder', text='Папка', command=lambda: self.treeview_sort_column(self.dialogs_tree, 'folder', False))
@@ -371,11 +377,123 @@ class TelegramSummarizerGUI:
         # Текстовое поле для логов
         self.log_text = scrolledtext.ScrolledText(self.log_frame, wrap=tk.WORD, height=10)
         self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Добавляем фрейм для расширенного поиска в начале интерфейса
+        self.setup_search_frame()
         
         # Индикатор прогресса
         self.progress = ttk.Progressbar(self.main_frame, mode='indeterminate')
         self.progress.pack(fill=tk.X, padx=5, pady=5)
+        self.progress.pack(fill=tk.X, padx=5, pady=5)
     
+    def setup_search_frame(self):
+        """Настройка фрейма расширенного поиска"""
+        # Создаем контейнер для расширенного поиска в самом начале основного интерфейса
+        style = ttk.Style()
+        style.configure('Search.TLabelframe', background='#e6f2ff')
+        style.configure('Search.TLabelframe.Label', font=('Arial', 11, 'bold'), foreground='#0066cc', background='#e6f2ff')
+        
+        self.search_frame = ttk.LabelFrame(self.main_frame, text="Расширенный поиск по нескольким чатам", style='Search.TLabelframe')
+        self.search_frame.pack(fill=tk.X, padx=5, pady=5, before=self.main_paned)
+        
+        # Добавляем информацию о выбранных диалогах в фрейм поиска
+        selection_frame = ttk.Frame(self.search_frame)
+        selection_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.search_selection_label = ttk.Label(selection_frame, textvariable=self.selected_dialogs_var, font=('Arial', 10, 'bold'))
+        self.search_selection_label.pack(side=tk.LEFT, padx=5)
+        
+        # Добавляем инструкции по выбору
+        instruction_frame = ttk.Frame(self.search_frame)
+        instruction_frame.pack(fill=tk.X, padx=5, pady=2)
+        
+        instruction_text = "Выберите несколько диалогов, удерживая Ctrl и кликая на диалоги в списке слева"
+        ttk.Label(instruction_frame, text=instruction_text, font=('Arial', 9, 'italic')).pack(anchor=tk.W)
+        
+        # Создаем контейнер для параметров поиска с отступами и рамкой
+        style.configure('SearchParams.TFrame', background='#f0f8ff')
+        search_params_frame = ttk.Frame(self.search_frame, style='SearchParams.TFrame')
+        search_params_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Разделяем параметры на левую и правую колонки для лучшей организации
+        left_frame = ttk.Frame(search_params_frame)
+        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        right_frame = ttk.Frame(search_params_frame)
+        right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0))
+        
+        # Левая колонка: Текст сообщения, отправитель и дата
+        ttk.Label(left_frame, text="Текст сообщения:", font=('Arial', 9, 'bold')).grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        self.text_search_var = tk.StringVar()
+        text_entry = ttk.Entry(left_frame, textvariable=self.text_search_var, width=25)
+        text_entry.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W+tk.E)
+        ttk.Label(left_frame, text="Слово или фраза в сообщении", font=('Arial', 8)).grid(row=0, column=2, padx=5, pady=2, sticky=tk.W)
+        
+        ttk.Label(left_frame, text="Отправитель:", font=('Arial', 9, 'bold')).grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        self.sender_search_var = tk.StringVar()
+        sender_entry = ttk.Entry(left_frame, textvariable=self.sender_search_var, width=25)
+        sender_entry.grid(row=1, column=1, padx=5, pady=2, sticky=tk.W+tk.E)
+        ttk.Label(left_frame, text="Имя или часть имени отправителя", font=('Arial', 8)).grid(row=1, column=2, padx=5, pady=2, sticky=tk.W)
+        
+        ttk.Label(left_frame, text="Дата:", font=('Arial', 9, 'bold')).grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
+        self.date_search_var = tk.StringVar()
+        date_entry = ttk.Entry(left_frame, textvariable=self.date_search_var, width=25)
+        date_entry.grid(row=2, column=1, padx=5, pady=2, sticky=tk.W+tk.E)
+        ttk.Label(left_frame, text="Формат: ГГГГ-ММ-ДД", font=('Arial', 8)).grid(row=2, column=2, padx=5, pady=2, sticky=tk.W)
+        
+        # Правая колонка: Статус ответа и кнопка поиска
+        ttk.Label(right_frame, text="Статус ответа:", font=('Arial', 9, 'bold')).grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        self.reply_status_var = tk.StringVar(value="all")
+        reply_status_values = {
+            'all': 'Все сообщения',
+            'replied': 'С ответами',
+            'not_replied': 'Без ответов'
+        }
+        reply_status_combo = ttk.Combobox(right_frame, textvariable=self.reply_status_var, state="readonly", width=25)
+        reply_status_combo['values'] = list(reply_status_values.keys())
+        reply_status_combo.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W+tk.E)
+        
+        # Добавляем текстовое описание выбранного значения
+        self.reply_status_description = ttk.Label(right_frame, text="Все сообщения", font=('Arial', 8))
+        self.reply_status_description.grid(row=0, column=2, padx=5, pady=2, sticky=tk.W)
+        
+        # Обработчик изменения статуса ответа
+        def update_reply_status_description(*args):
+            selected = self.reply_status_var.get()
+            if selected in reply_status_values:
+                self.reply_status_description.config(text=reply_status_values[selected])
+        
+        self.reply_status_var.trace_add("write", update_reply_status_description)
+        
+        # Добавляем пустую строку для выравнивания с левой колонкой
+        ttk.Label(right_frame, text="").grid(row=1, column=0, padx=5, pady=2)
+        
+        # Кнопка поиска с улучшенным стилем
+        style.configure('Search.TButton', font=('Arial', 10, 'bold'))
+        self.search_btn = ttk.Button(
+            self.search_frame,
+            text="Искать во всех выбранных чатах",
+            command=self.search_all_chats,
+            style='Search.TButton'
+        )
+        self.search_btn.pack(fill=tk.X, padx=20, pady=10)
+        # По умолчанию кнопка поиска недоступна
+        self.search_btn.state(['disabled'])
+    
+    def update_dialogs_selection_status(self):
+        """Обновляет статус выбора диалогов для множественного поиска"""
+        if hasattr(self, 'selected_dialogs'):
+            count = len(self.selected_dialogs)
+            self.selected_dialogs_var.set(f"Выбрано диалогов: {count}")
+            
+            # Если выбрано хотя бы один диалог, активируем кнопку мульти-поиска
+            if count > 0:
+                self.search_btn.state(['!disabled'])
+            else:
+                self.search_btn.state(['disabled'])
+        else:
+            self.selected_dialogs_var.set("Выбрано диалогов: 0")
+            self.search_btn.state(['disabled'])
+            
     def setup_config_tab(self):
         """Настройка вкладки конфига"""
         # Выбор конфига
@@ -1517,50 +1635,407 @@ db_settings = {{
         if not selected_items:
             return
         
-        item = selected_items[0]
-        dialog_values = self.dialogs_tree.item(item, 'values')
-        selected_dialog_id = dialog_values[-1]
-        selected_dialog_name = dialog_values[0]  # Название диалога
+        # Обработка множественного выбора диалогов
+        self.selected_dialogs = []
+        for item in selected_items:
+            dialog_values = self.dialogs_tree.item(item, 'values')
+            dialog_id = int(dialog_values[-1])
+            dialog_name = dialog_values[0]
+            self.selected_dialogs.append({
+                'id': dialog_id,
+                'name': dialog_name
+            })
         
-        try:
-            # Преобразуем ID в число
-            self.selected_dialog_id = int(selected_dialog_id)
-            self.selected_dialog_name = selected_dialog_name
-            self.log(f"[ДИАЛОГ] Выбран диалог с ID: {self.selected_dialog_id} ({selected_dialog_name})")
+        self.log(f"Выбрано диалогов: {len(self.selected_dialogs)}")
+        
+        # Обновляем статус выбора для расширенного поиска
+        self.update_dialogs_selection_status()
+        
+        # Если выбран только один диалог, обрабатываем его как раньше для отображения тем и сообщений
+        if len(selected_items) == 1:
+            item = selected_items[0]
+            dialog_values = self.dialogs_tree.item(item, 'values')
+            selected_dialog_id = dialog_values[-1]
+            selected_dialog_name = dialog_values[0]
             
-            # Сбрасываем выбранную тему при выборе нового диалога
-            if hasattr(self, 'selected_topic_id'):
-                self.log(f"[ДИАЛОГ] Сброс выбранной темы (была: {self.selected_topic_id})")
-                self.selected_topic_id = None
+            try:
+                # Преобразуем ID в число
+                self.selected_dialog_id = int(selected_dialog_id)
+                self.selected_dialog_name = selected_dialog_name
+                self.log(f"[ДИАЛОГ] Выбран диалог с ID: {self.selected_dialog_id} ({selected_dialog_name})")
                 
-            # Сбрасываем режим "показать все сообщения"
-            if self.show_all_messages_var.get():
-                self.log(f"[ДИАЛОГ] Сброс режима 'показать все сообщения'")
-                self.show_all_messages_var.set(False)
+                # Сбрасываем выбранную тему при выборе нового диалога
+                if hasattr(self, 'selected_topic_id'):
+                    self.log(f"[ДИАЛОГ] Сброс выбранной темы (была: {self.selected_topic_id})")
+                    self.selected_topic_id = None
+                    
+                # Сбрасываем режим "показать все сообщения"
+                if self.show_all_messages_var.get():
+                    self.log(f"[ДИАЛОГ] Сброс режима 'показать все сообщения'")
+                    self.show_all_messages_var.set(False)
+                
+                # Обновляем заголовки для лучшей визуализации контекста
+                self.messages_filter_frame.configure(text=f"Фильтры сообщений: {selected_dialog_name}")
+                self.messages_frame.configure(text=f"Сообщения из: {selected_dialog_name}")
+                self.topics_frame.configure(text=f"Темы в: {selected_dialog_name}")
+                
+                # Обновляем UI
+                self.load_messages_btn.state(['!disabled'])
+                
+                # Очищаем список сообщений при выборе нового диалога
+                self.messages_tree.delete(*self.messages_tree.get_children())
+                
+                # Очищаем список тем и проверяем, поддерживает ли чат темы
+                self.topics_tree.delete(*self.topics_tree.get_children())
+                
+                # Запускаем проверку наличия тем
+                self.check_topics_support()
+                
+            except (ValueError, IndexError) as e:
+                self.log(f"Ошибка при выборе диалога: {e}")
+                messagebox.showerror("Ошибка", f"Не удалось выбрать диалог: {e}")
+                self.selected_dialog_id = None
+                self.load_messages_btn.state(['disabled'])
+        else:
+            # При множественном выборе очищаем темы и сообщения
+            self.topics_tree.delete(*self.topics_tree.get_children())
+            self.messages_tree.delete(*self.messages_tree.get_children())
+            self.messages_filter_frame.configure(text=f"Фильтры сообщений: {len(selected_items)} чатов выбрано")
+            self.messages_frame.configure(text=f"Сообщения из нескольких чатов")
+            self.topics_frame.configure(text=f"Темы недоступны при выборе нескольких чатов")
+    
+    def search_all_chats(self):
+        """Поиск сообщений во всех выбранных чатах"""
+        if not hasattr(self, 'selected_dialogs') or not self.selected_dialogs:
+            messagebox.showwarning("Предупреждение", "Выберите хотя бы один диалог для поиска")
+            return
+        
+        # Активируем индикатор загрузки
+        self.progress.start()
+        self.search_btn.state(['disabled'])
+        
+        # Подробный дебаг о клике по кнопке поиска
+        self.log("[ПОИСК] Нажата кнопка поиска по нескольким чатам")
+        
+        # Проверяем заполненность полей поиска
+        text_value = self.text_search_var.get().strip()
+        sender_value = self.sender_search_var.get().strip()
+        date_value = self.date_search_var.get().strip()
+        reply_status = self.reply_status_var.get()
+        
+        # Логирование для отладки пустых полей
+        self.log(f"[ПОИСК] Проверка введенных данных:")
+        self.log(f"[ПОИСК] - Текст: '{text_value}' (заполнено: {bool(text_value)})")
+        self.log(f"[ПОИСК] - Отправитель: '{sender_value}' (заполнено: {bool(sender_value)})")
+        self.log(f"[ПОИСК] - Дата: '{date_value}' (заполнено: {bool(date_value)})")
+        self.log(f"[ПОИСК] - Статус ответа: '{reply_status}' (не 'all': {reply_status != 'all'})")
+        
+        if not (text_value or sender_value or date_value or reply_status != 'all'):
+            self.log("[ПОИСК] Предупреждение: все критерии поиска пустые")
+            choice = messagebox.askyesno(
+                "Подтверждение поиска",
+                "Вы не указали ни одного критерия поиска. Будут показаны все сообщения в выбранных чатах. Продолжить?"
+            )
+            if not choice:
+                self.progress.stop()
+                self.search_btn.state(['!disabled'])
+                self.log("[ПОИСК] Поиск отменен пользователем")
+                return
+        
+        # Параметры поиска
+        search_params = {
+            'text': text_value,
+            'sender': sender_value,
+            'date': date_value,
+            'reply_status': reply_status,
+            'limit': int(self.max_messages_var.get())
+        }
+        
+        # Вывод информации о параметрах поиска
+        self.log(f"[ПОИСК] Параметры поиска:")
+        for key, value in search_params.items():
+            if key != 'limit':  # не показываем лимит в каждой строке
+                self.log(f"[ПОИСК] - {key}: '{value}'")
+        self.log(f"[ПОИСК] - Лимит сообщений: {search_params['limit']}")
+        
+        # Список ID выбранных диалогов
+        dialog_ids = [dialog['id'] for dialog in self.selected_dialogs]
+        dialog_names = [dialog['name'] for dialog in self.selected_dialogs]
+        
+        self.log(f"[ПОИСК] Выбрано диалогов: {len(dialog_ids)}")
+        for i, (did, name) in enumerate(zip(dialog_ids, dialog_names)):
+            self.log(f"[ПОИСК] {i+1}. {name} (ID: {did})")
+        
+        # Обновляем заголовки для отображения процесса поиска
+        self.messages_frame.configure(text=f"Поиск в {len(dialog_ids)} чатах...")
+        self.topics_frame.configure(text=f"Процесс поиска...")
+        
+        # Визуальное отображение поиска в интерфейсе
+        self.ai_chat.config(state=tk.NORMAL)
+        self.ai_chat.insert(tk.END, f"Выполняется поиск по {len(dialog_ids)} выбранным чатам...\n")
+        self.ai_chat.insert(tk.END, f"Критерии поиска:\n")
+        if text_value:
+            self.ai_chat.insert(tk.END, f"- Текст: '{text_value}'\n")
+        if sender_value:
+            self.ai_chat.insert(tk.END, f"- Отправитель: '{sender_value}'\n")
+        if date_value:
+            self.ai_chat.insert(tk.END, f"- Дата: '{date_value}'\n")
+        if reply_status != 'all':
+            self.ai_chat.insert(tk.END, f"- Статус ответа: '{reply_status}'\n")
+        self.ai_chat.insert(tk.END, f"\nПожалуйста, подождите...\n")
+        self.ai_chat.see(tk.END)
+        self.ai_chat.config(state=tk.DISABLED)
+        
+        # Запускаем асинхронный поиск
+        self.log("[ПОИСК] Запуск асинхронного поиска...")
+        asyncio.run_coroutine_threadsafe(self.search_messages_async(dialog_ids, search_params), self.loop)
+    
+    async def search_messages_async(self, dialog_ids, search_params):
+        """Асинхронный поиск сообщений в нескольких чатах"""
+        search_start_time = datetime.datetime.now()
+        try:
+            self.log("[ПОИСК] Начало асинхронного поиска сообщений...")
             
-            # Обновляем заголовки для лучшей визуализации контекста
-            self.messages_filter_frame.configure(text=f"Фильтры сообщений: {selected_dialog_name}")
-            self.messages_frame.configure(text=f"Сообщения из: {selected_dialog_name}")
-            self.topics_frame.configure(text=f"Темы в: {selected_dialog_name}")
+            # Проверяем состояние клиента
+            if not self.client_manager or not self.client_manager.client.is_connected():
+                self.log("[ПОИСК] Клиент не подключен, инициализация...")
+                if not await self.client_manager.init_client():
+                    self.log("[ПОИСК] ОШИБКА: Не удалось инициализировать клиент")
+                    messagebox.showerror("Ошибка", "Не удалось установить соединение с Telegram")
+                    return
+                else:
+                    self.log("[ПОИСК] Клиент успешно инициализирован")
+            else:
+                self.log("[ПОИСК] Клиент уже подключен, продолжаем...")
             
-            # Обновляем UI
-            self.load_messages_btn.state(['!disabled'])
-            
-            # Очищаем список сообщений при выборе нового диалога
+            # Очищаем существующие результаты
+            self.topics_tree.delete(*self.topics_tree.get_children())
             self.messages_tree.delete(*self.messages_tree.get_children())
             
-            # Очищаем список тем и проверяем, поддерживает ли чат темы
-            self.topics_tree.delete(*self.topics_tree.get_children())
+            # Логируем начало поиска
+            self.log(f"[ПОИСК] Вызов метода search_multiple_chats для {len(dialog_ids)} диалогов...")
+            self.log(f"[ПОИСК] Параметры поиска: текст='{search_params.get('text', '')}', отправитель='{search_params.get('sender', '')}', дата='{search_params.get('date', '')}'")
             
-            # Запускаем проверку наличия тем
-            self.check_topics_support()
+            # Обновляем интерфейс с сообщением о начале поиска
+            def update_ui_start():
+                self.ai_chat.config(state=tk.NORMAL)
+                self.ai_chat.insert(tk.END, f"Начало поиска: {datetime.datetime.now().strftime('%H:%M:%S')}\n")
+                self.ai_chat.see(tk.END)
+                self.ai_chat.config(state=tk.DISABLED)
             
-        except (ValueError, IndexError) as e:
-            self.log(f"Ошибка при выборе диалога: {e}")
-            messagebox.showerror("Ошибка", f"Не удалось выбрать диалог: {e}")
-            self.selected_dialog_id = None
-            self.load_messages_btn.state(['disabled'])
+            self.root.after(0, update_ui_start)
+            
+            # Вызываем метод поиска в нескольких чатах
+            results = await self.client_manager.search_multiple_chats(
+                dialog_ids=dialog_ids,
+                search_params=search_params
+            )
+            
+            # Выводим отчет о результатах
+            total_results = sum(len(chat_results) for chat_results in results.values())
+            self.log(f"[ПОИСК] Поиск завершен. Всего найдено: {total_results} сообщений")
+            
+            # Подробная информация по каждому чату
+            chats_with_results = 0
+            for dialog_id, messages in results.items():
+                dialog_name = "Неизвестный чат"
+                for dialog in self.dialogs:
+                    if dialog['id'] == dialog_id:
+                        dialog_name = dialog['name']
+                        break
+                
+                if len(messages) > 0:
+                    chats_with_results += 1
+                    
+                self.log(f"[ПОИСК] Чат '{dialog_name}' (ID: {dialog_id}): найдено {len(messages)} сообщений")
+            
+            # Если нет результатов
+            if not results or total_results == 0:
+                self.log("[ПОИСК] Поиск не дал результатов")
+                
+                # Обновляем интерфейс с сообщением о результатах
+                def update_ui_no_results():
+                    self.ai_chat.config(state=tk.NORMAL)
+                    self.ai_chat.insert(tk.END, "\n🔍 Поиск завершен\n")
+                    self.ai_chat.insert(tk.END, "❌ По вашему запросу ничего не найдено\n")
+                    search_time = datetime.datetime.now() - search_start_time
+                    self.ai_chat.insert(tk.END, f"⏱️ Время поиска: {search_time.total_seconds():.2f} сек.\n")
+                    self.ai_chat.see(tk.END)
+                    self.ai_chat.config(state=tk.DISABLED)
+                    
+                    self.messages_frame.configure(text="Список сообщений: нет результатов")
+                    self.topics_frame.configure(text="Результаты поиска: ничего не найдено")
+                
+                self.root.after(0, update_ui_no_results)
+                messagebox.showinfo("Информация", "По вашему запросу ничего не найдено")
+                return
+            
+            # Обрабатываем и отображаем результаты
+            self.log("[ПОИСК] Обработка результатов поиска...")
+            self.process_search_results(results)
+            self.log("[ПОИСК] Результаты успешно обработаны и отображены")
+            
+            # Обновляем интерфейс с сообщением о результатах
+            search_time = datetime.datetime.now() - search_start_time
+            
+            def update_ui_results():
+                self.ai_chat.config(state=tk.NORMAL)
+                self.ai_chat.insert(tk.END, "\n🔍 Поиск завершен\n")
+                self.ai_chat.insert(tk.END, f"✅ Найдено {total_results} сообщений в {chats_with_results} чатах\n")
+                self.ai_chat.insert(tk.END, f"⏱️ Время поиска: {search_time.total_seconds():.2f} сек.\n")
+                self.ai_chat.see(tk.END)
+                self.ai_chat.config(state=tk.DISABLED)
+            
+            self.root.after(0, update_ui_results)
+            
+        except Exception as e:
+            self.log(f"[ПОИСК] ОШИБКА при поиске сообщений: {e}")
+            import traceback
+            self.log(traceback.format_exc())
+            
+            # Обновляем интерфейс с сообщением об ошибке
+            def update_ui_error():
+                self.ai_chat.config(state=tk.NORMAL)
+                self.ai_chat.insert(tk.END, "\n❌ Ошибка при поиске\n")
+                self.ai_chat.insert(tk.END, f"Текст ошибки: {str(e)}\n")
+                self.ai_chat.see(tk.END)
+                self.ai_chat.config(state=tk.DISABLED)
+                
+                self.messages_frame.configure(text="Список сообщений")
+                self.topics_frame.configure(text="Произошла ошибка при поиске")
+            
+            self.root.after(0, update_ui_error)
+            messagebox.showerror("Ошибка", f"Ошибка при поиске: {e}")
+        finally:
+            self.progress.stop()
+            self.search_btn.state(['!disabled'])
+            self.log("[ПОИСК] Поиск завершен")
     
+    def process_search_results(self, results):
+        """Обработка и отображение результатов поиска"""
+        self.log("[РЕЗУЛЬТАТЫ] Начало обработки результатов поиска")
+        
+        # Очистка текущих данных в списках
+        self.topics_tree.delete(*self.topics_tree.get_children())
+        self.messages_tree.delete(*self.messages_tree.get_children())
+        
+        # Подготовка объединенного списка тем для отображения
+        topics = []
+        topic_id_counter = 1
+        
+        # Счетчик для статистики
+        total_chats = 0
+        total_messages = 0
+        
+        for dialog_id, messages in results.items():
+            # Пропускаем пустые результаты
+            if not messages:
+                self.log(f"[РЕЗУЛЬТАТЫ] Чат {dialog_id} не содержит подходящих сообщений, пропускаем")
+                continue
+                
+            total_chats += 1
+            total_messages += len(messages)
+            
+            # Находим информацию о диалоге
+            dialog_name = None
+            dialog_type = None
+            for dialog in self.dialogs:
+                if dialog['id'] == dialog_id:
+                    dialog_name = dialog['name']
+                    dialog_type = dialog.get('type', 'Неизвестный тип')
+                    break
+                    
+            if not dialog_name:
+                dialog_name = f"Чат ID: {dialog_id}"
+            
+            self.log(f"[РЕЗУЛЬТАТЫ] Обработка чата '{dialog_name}' ({dialog_type}) - {len(messages)} сообщений")
+            
+            # Создаем "тему" для каждого чата с результатами
+            topic_title = f"Результаты в {dialog_name} ({len(messages)} сообщений)"
+            topics.append({
+                'id': topic_id_counter,
+                'title': topic_title,
+                'dialog_id': dialog_id,
+                'messages': messages
+            })
+            self.log(f"[РЕЗУЛЬТАТЫ] Создана тема #{topic_id_counter}: '{topic_title}'")
+            topic_id_counter += 1
+        
+        # Если есть результаты, отображаем их
+        if topics:
+            self.log(f"[РЕЗУЛЬТАТЫ] Отображение {len(topics)} тем в дереве результатов")
+            # Отображение тем в списке тем
+            for topic in topics:
+                item_id = self.topics_tree.insert('', 'end', values=(
+                    topic['id'],
+                    topic['title'],
+                    len(topic['messages'])
+                ))
+                self.log(f"[РЕЗУЛЬТАТЫ] Добавлена тема в UI: {topic['title']} (item_id: {item_id})")
+            
+            # Обновляем статус
+            self.log(f"[РЕЗУЛЬТАТЫ] Найдено всего {total_messages} сообщений в {total_chats} чатах")
+            
+            # Настраиваем заголовок для панели тем
+            self.topics_frame.configure(text=f"Результаты поиска: найдено {total_messages} сообщений в {total_chats} чатах")
+            
+            # Настраиваем заголовок для панели сообщений
+            self.messages_frame.configure(text="Выберите результат поиска для просмотра сообщений")
+        else:
+            self.log("[РЕЗУЛЬТАТЫ] Не найдено ни одного сообщения, удовлетворяющего критериям поиска")
+            self.topics_frame.configure(text="Результаты поиска: ничего не найдено")
+            self.messages_frame.configure(text="Сообщения")
+        
+        # Сохраняем результаты поиска для последующего отображения
+        self.search_results_topics = topics
+        self.log("[РЕЗУЛЬТАТЫ] Завершена обработка результатов поиска")
+    
+    def display_search_results_messages(self, messages):
+        """Отображение сообщений из результатов поиска"""
+        # Очищаем список сообщений
+        self.messages_tree.delete(*self.messages_tree.get_children())
+        
+        # Заполняем список сообщений
+        for message in messages:
+            # Проверяем тип поля date и форматируем соответственно
+            if isinstance(message['date'], str):
+                try:
+                    # Пробуем преобразовать ISO формат в datetime для форматирования
+                    date_obj = datetime.datetime.fromisoformat(message['date'].replace('Z', '+00:00'))
+                    date_str = date_obj.strftime('%Y-%m-%d %H:%M:%S')
+                except (ValueError, TypeError):
+                    date_str = message['date']
+            else:
+                date_str = message['date'].strftime('%Y-%m-%d %H:%M:%S')
+            
+            try:
+                # Получаем имя диалога, если оно есть в сообщении
+                dialog_info = ""
+                if 'dialog_id' in message:
+                    for dialog in self.dialogs:
+                        if dialog['id'] == message['dialog_id']:
+                            dialog_info = f"[{dialog['name']}] "
+                            break
+                
+                # Безопасная конкатенация строк
+                sender_name = message.get('sender_name', 'Неизвестно')
+                display_name = f"{dialog_info}{sender_name}" if dialog_info else sender_name
+                
+                # Добавляем в Treeview
+                self.messages_tree.insert('', 'end', values=(
+                    message['id'],
+                    display_name,
+                    message.get('text', '')[:100] + ('...' if len(message.get('text', '')) > 100 else ''),
+                    date_str
+                ))
+            except Exception as e:
+                self.log(f"Ошибка при отображении сообщения: {e}")
+        
+        # Сохраняем сообщения для последующей фильтрации
+        self.messages = messages
+        
+        self.log(f"Отображено {len(messages)} сообщений из результатов поиска")
+
     def on_topic_select(self, event):
         """Обработка выбора темы"""
         selected_items = self.topics_tree.selection()
@@ -1572,6 +2047,39 @@ db_settings = {{
         selected_topic_id = values[0]
         selected_topic_title = values[1]
         
+        # Проверяем, выбраны ли результаты мульти-поиска
+        if hasattr(self, 'search_results_topics'):
+            try:
+                # Получаем все выбранные темы, а не только первую
+                selected_items = self.topics_tree.selection()
+                if not selected_items:
+                    return
+                
+                # Собираем все сообщения из выбранных тем
+                all_messages = []
+                selected_topics_info = []
+                
+                for item in selected_items:
+                    topic_values = self.topics_tree.item(item, 'values')
+                    topic_id = int(topic_values[0])
+                    topic_title = topic_values[1]
+                    selected_topics_info.append(f"{topic_title} (ID: {topic_id})")
+                    
+                    # Находим соответствующую тему в результатах поиска
+                    for topic in self.search_results_topics:
+                        if topic['id'] == topic_id:
+                            all_messages.extend(topic['messages'])
+                            break
+                
+                if all_messages:
+                    self.log(f"Выбраны результаты поиска для чатов: {', '.join(selected_topics_info)}")
+                    # Отображаем сообщения из всех выбранных тем
+                    self.display_search_results_messages(all_messages)
+                    return
+            except (ValueError, IndexError, KeyError) as e:
+                self.log(f"Ошибка при обработке результатов поиска: {e}")
+        
+        # Стандартная обработка выбора темы, если это не результаты поиска
         try:
             # Преобразуем ID в число
             self.selected_topic_id = int(selected_topic_id)
