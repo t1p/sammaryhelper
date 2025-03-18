@@ -896,7 +896,8 @@ class TelegramSummarizerGUI:
                 
                 # Получаем фильтры от пользователя
                 dialog_limit = self.max_dialogs_var.get()
-                self.log(f"Значение поля max_dialogs_var: {dialog_limit}")
+                if self.debug_var.get():
+                    self.log(f"Значение поля max_dialogs_var: {dialog_limit}")
                 
                 try:
                     dialog_limit_int = int(dialog_limit)
@@ -925,7 +926,8 @@ class TelegramSummarizerGUI:
                     unread_count = dialog.get('unread_count', 0)
                     
                     # Выводим отладочную информацию
-                    self.log(f"Добавление диалога: {dialog['name']}, ID: {dialog['id']}")
+                    if self.debug_var.get():
+                        self.log(f"Добавление диалога: {dialog['name']}, ID: {dialog['id']}")
                     
                     self.dialogs_tree.insert('', 'end', values=(
                         dialog['name'], 
@@ -935,7 +937,8 @@ class TelegramSummarizerGUI:
                         dialog['id']  # Важно: ID должен быть последним элементом
                     ))
                 
-                self.log(f"Диалоги загружены: {len(self.dialogs)}")
+                if self.debug_var.get():
+                    self.log(f"Диалоги загружены: {len(self.dialogs)}")
             except Exception as e:
                 self.log(f"Ошибка при загрузке диалогов: {e}")
                 import traceback
