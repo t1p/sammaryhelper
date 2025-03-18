@@ -62,6 +62,9 @@ class TelegramSummarizerGUI:
         # Устанавливаем состояние чекбокса "Дебаг"
         self.debug_var = tk.BooleanVar(value=self.settings.get('debug', False))
         
+        # Добавляем переменную для управления контекстом
+        self.reset_context_var = tk.BooleanVar(value=False)
+        
         self.setup_main_tab()
         self.setup_config_tab()  # Добавляем настройку новой вкладки
         self.setup_settings_tab()
@@ -89,6 +92,7 @@ class TelegramSummarizerGUI:
         
         # Привязываем событие закрытия окна
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        
     
     def setup_styles(self):
         """Настройка стилей для улучшения внешнего вида"""
@@ -287,6 +291,30 @@ class TelegramSummarizerGUI:
         # Фрейм для чата с ИИ (левая часть нижней панели)
         self.ai_chat_frame = ttk.LabelFrame(self.bottom_paned, text="Чат с ИИ")
         self.bottom_paned.add(self.ai_chat_frame, weight=1)
+        
+        # Создаем фрейм для элементов управления контекстом
+        self.ai_context_controls = ttk.Frame(self.ai_chat_frame)
+        self.ai_context_controls.pack(fill=tk.X, expand=False, padx=5, pady=5)
+        
+        # Добавляем чекбокс для сброса контекста
+        self.reset_context_cb = ttk.Checkbutton(
+            self.ai_context_controls, 
+            text="Сбросить контекст диалога", 
+            variable=self.reset_context_var if hasattr(self, 'reset_context_var') else tk.BooleanVar(value=False)
+        )
+        self.reset_context_cb.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Добавляем кнопку для просмотра истории диалога
+        self.show_history_btn = ttk.Button(
+            self.ai_context_controls, 
+            text="История диалога", 
+            command=self.show_chat_history
+        )
+        self.show_history_btn.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Добавляем метку для отображения использования токенов
+        self.token_usage_label = ttk.Label(self.ai_context_controls, text="Токены: 0/4096 (0.0%)")
+        self.token_usage_label.pack(side=tk.RIGHT, padx=5, pady=5)
         
         # Создаем вертикальный PanedWindow для истории чата и поля ввода
         self.ai_chat_paned = ttk.PanedWindow(self.ai_chat_frame, orient=tk.VERTICAL)
@@ -999,15 +1027,48 @@ class TelegramSummarizerGUI:
                         config = load_config(py_config_path)
                         self.settings['openai_api_key'] = getattr(config, 'openai_api_key', '')
                 
-                # Получаем ответ от ИИ
+                # Получаем значение опции сброса контекста
+                reset_context = self.reset_context_var.get()
+                if reset_context:
+                    self.log("Сброс истории диалога с ИИ")
+                
+                # Получаем ответ от ИИ с учетом опции сброса контекста
                 response = await self.ai_manager.get_response(
                     user_query=message, 
-                    context=context
+                    context=context,
+                    reset_context=reset_context
                 )
                 
                 # Отображаем ответ в чате
                 self.ai_chat.insert(tk.END, f"ИИ: {response}\n\n")
                 self.ai_chat.see(tk.END)
+                
+                # Оцениваем и отображаем использование токенов
+                if hasattr(self.ai_manager, 'conversation_history'):
+                    estimated_tokens = self.ai_manager.estimate_tokens(
+                        [{"role": "system", "content": self.settings.get('system_prompt', '')}] + 
+                        self.ai_manager.conversation_history
+                    )
+                    self.update_token_usage(estimated_tokens)
+                
+                # Сбрасываем опцию сброса контекста после использования
+                self.reset_context_var.set(False)
+                
+                # Если у нас есть DB handler, кешируем взаимодействие
+                if hasattr(self, 'db_handler') and self.db_handler:
+                    account_id = self.settings.get('account_id', 'default')
+                    model = self.settings.get('openai_model', 'gpt-3.5-turbo')
+                    system_prompt = self.settings.get('system_prompt', '')
+                    
+                    await self.db_handler.cache_ai_interaction(
+                        user_query=message,
+                        context=context,
+                        model=model,
+                        system_prompt=system_prompt,
+                        response=response,
+                        account_id=account_id,
+                        history=self.ai_manager.conversation_history
+                    )
                 
             except Exception as e:
                 self.log(f"Ошибка при отправке запроса к ИИ: {e}")
@@ -1428,4 +1489,70 @@ class TelegramSummarizerGUI:
                 self.progress.stop()
                 self.update_cache_btn.state(['!disabled'])
         
-        asyncio.run_coroutine_threadsafe(run(), self.loop) 
+        asyncio.run_coroutine_threadsafe(run(), self.loop)
+
+    def show_chat_history(self):
+        """Отображение истории диалога с ИИ"""
+        if not hasattr(self.ai_manager, 'conversation_history') or not self.ai_manager.conversation_history:
+            self.log("История диалога пуста")
+            return
+        
+        # Создаем новое окно для отображения истории
+        history_window = tk.Toplevel(self.root)
+        history_window.title("История диалога с ИИ")
+        history_window.geometry("600x400")
+        
+        # Добавляем текстовое поле для отображения истории
+        history_text = scrolledtext.ScrolledText(history_window, wrap=tk.WORD)
+        history_text.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
+        
+        # Заполняем историю
+        for i, message in enumerate(self.ai_manager.conversation_history):
+            role = message["role"]
+            content = message["content"]
+            
+            if role == "user":
+                history_text.insert(tk.END, f"Вы: {content}\n\n")
+            elif role == "assistant":
+                history_text.insert(tk.END, f"ИИ: {content}\n\n")
+        
+        # Прокручиваем к концу
+        history_text.see(tk.END)
+        
+        # Кнопка для очистки истории
+        clear_btn = ttk.Button(
+            history_window, 
+            text="Очистить историю", 
+            command=lambda: self.clear_chat_history(history_window)
+        )
+        clear_btn.pack(side=tk.BOTTOM, pady=10)
+
+    def clear_chat_history(self, window=None):
+        """Очистка истории диалога с ИИ"""
+        if hasattr(self.ai_manager, 'conversation_history'):
+            self.ai_manager.conversation_history = []
+            self.log("История диалога очищена")
+            self.update_token_usage(0)
+            
+            # Закрываем окно, если оно было передано
+            if window:
+                window.destroy()
+    
+    def update_token_usage(self, estimated_tokens):
+        """Обновление информации об использовании токенов"""
+        # Максимальное количество токенов для модели
+        max_tokens = 4096  # Для модели gpt-3.5-turbo
+        percent = min(100, (estimated_tokens / max_tokens) * 100)
+        
+        # Обновляем текст метки
+        self.token_usage_label.config(
+            text=f"Токены: {estimated_tokens}/{max_tokens} ({percent:.1f}%)"
+        )
+        
+        # Меняем цвет, если приближаемся к лимиту
+        if percent > 80:
+            self.token_usage_label.config(foreground="red")
+        elif percent > 60:
+            self.token_usage_label.config(foreground="orange")
+        else:
+            self.token_usage_label.config(foreground="green")

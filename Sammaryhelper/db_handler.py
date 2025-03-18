@@ -230,6 +230,7 @@ class DatabaseHandler:
                     model TEXT NOT NULL,
                     system_prompt TEXT,
                     account_id TEXT NOT NULL,
+                    history JSONB,
                     created_at TIMESTAMP NOT NULL DEFAULT NOW()
                 )
             ''')
@@ -389,17 +390,28 @@ class DatabaseHandler:
             return []
     
     async def cache_ai_interaction(self, user_query: str, context: str, model: str, 
-                                  system_prompt: str, response: str, account_id: str) -> bool:
-        """Кеширование взаимодействия с ИИ"""
+                                  system_prompt: str, response: str, account_id: str, history=None) -> bool:
+        """Кеширование взаимодействия с ИИ
+        
+        Args:
+            user_query: Запрос пользователя
+            context: Контекст сообщений
+            model: Модель ИИ
+            system_prompt: Системный промпт
+            response: Ответ ИИ
+            account_id: ID аккаунта
+            history: История диалога в формате JSON (опционально)
+        """
         try:
             async with self.connection_pool.acquire() as connection:
                 async with connection.transaction():
                     # Сохраняем запрос
                     request_id = await connection.fetchval('''
-                        INSERT INTO ai_requests (user_query, context, model, system_prompt, account_id)
-                        VALUES ($1, $2, $3, $4, $5)
+                        INSERT INTO ai_requests (user_query, context, model, system_prompt, account_id, history)
+                        VALUES ($1, $2, $3, $4, $5, $6)
                         RETURNING id
-                    ''', user_query, context, model, system_prompt, account_id)
+                    ''', user_query, context, model, system_prompt, account_id, 
+                    json.dumps(history) if history else None)
                     
                     # Сохраняем ответ
                     await connection.execute('''
