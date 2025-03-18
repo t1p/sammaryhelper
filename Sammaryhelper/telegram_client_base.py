@@ -79,6 +79,7 @@ class TelegramClientBase:
                 
             # Инициализируем обработчик базы данных, если используется кеширование
             if self.use_cache:
+                self.log("Начинаю инициализацию клиента...")
                 try:
                     self.db_handler = DatabaseHandler(debug=self.config.get('debug', False))
                     db_connected = await self.db_handler.init_connection()
