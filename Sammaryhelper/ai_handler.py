@@ -1,4 +1,5 @@
 import openai
+import tiktoken
 from typing import List, Dict, Any
 
 class AIChatManager:
@@ -67,11 +68,32 @@ class AIChatManager:
             return f"Произошла ошибка при обработке запроса: {str(e)}"
 
     def estimate_tokens(self, messages):
-        """Оценка количества токенов в сообщениях"""
-        # Простая оценка: 1 токен ≈ 4 символа
-        total_chars = sum(len(m["content"]) for m in messages)
-        estimated_tokens = total_chars // 4
-        return estimated_tokens
+        """Точная оценка количества токенов в сообщениях с использованием tiktoken"""
+        try:
+            # Получаем выбранную модель из настроек или используем дефолтную
+            model = self.settings.get('openai_model', 'gpt-3.5-turbo')
+            
+            # Получаем энкодер для модели
+            encoding = tiktoken.encoding_for_model(model)
+            
+            # Подсчитываем токены для каждого сообщения
+            num_tokens = 0
+            for message in messages:
+                # Токены за роль сообщения
+                num_tokens += 4  # Каждое сообщение начинается с токенов <im_start>{role}</im_start>\n
+                
+                # Токены за содержание сообщения
+                num_tokens += len(encoding.encode(message.get("content", "")))
+            
+            # Добавляем финальные токены
+            num_tokens += 2  # <im_end>
+            
+            return num_tokens
+        except Exception as e:
+            print(f"Ошибка при оценке токенов: {e}")
+            # Если произошла ошибка, используем приблизительную оценку как запасной вариант
+            total_chars = sum(len(m.get("content", "")) for m in messages)
+            return total_chars // 4
 
     async def generate_summary(self, messages: List[str], openai_client) -> str:
         """Генерация саммари"""
@@ -79,7 +101,20 @@ class AIChatManager:
             return "Нет сообщений для анализа"
 
         def estimate_tokens(text: str) -> int:
-            return len(text) // 4
+            """Точная оценка количества токенов в тексте с использованием tiktoken"""
+            try:
+                # Получаем выбранную модель из настроек или используем дефолтную
+                model = self.settings.get('openai_model', 'gpt-3.5-turbo')
+                
+                # Получаем энкодер для модели
+                encoding = tiktoken.encoding_for_model(model)
+                
+                # Подсчитываем токены для текста
+                return len(encoding.encode(text))
+            except Exception as e:
+                print(f"Ошибка при оценке токенов текста: {e}")
+                # Если произошла ошибка, используем приблизительную оценку как запасной вариант
+                return len(text) // 4
 
         MAX_TOKENS = 14000
         current_chunk = []

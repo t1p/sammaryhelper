@@ -139,9 +139,14 @@ class TelegramClientManager:
                     self.log(f"Ошибка при инициализации базы данных: {e}")
                     self.use_cache = False
 
+            # Устанавливаем флаг готовности клиента
+            self.is_ready = True
+            self.log("Клиент Telegram успешно инициализирован и готов к использованию")
+            
             return True
 
         except Exception as e:
+            self.is_ready = False  # Явно устанавливаем флаг в False в случае ошибки
             raise Exception(f"Ошибка при инициализации клиента: {str(e)}")
 
     async def get_dialogs(self):
@@ -456,4 +461,8 @@ class TelegramClientManager:
             await self.client.disconnect()
         
         if self.db_handler:
-            await self.db_handler.close() 
+            await self.db_handler.close()
+            
+        # Сбрасываем флаг готовности при закрытии клиента
+        self.is_ready = False
+        self.log("Клиент Telegram закрыт") 
