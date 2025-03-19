@@ -8,9 +8,9 @@
     "chatgpt-4o-latest"
   ],
   "last_config": "config_0707",
-  "max_dialogs": "20",
-  "max_messages": "200",
-  "debug": false,
+  "max_dialogs": "2000",
+  "max_messages": "100",
+  "debug": true,
   "window_state": {
     "geometry": "1902x991+1+1"
   }
