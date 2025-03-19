@@ -918,11 +918,6 @@ class TelegramSummarizerGUI:
                 
                 self.dialogs = await self.client_manager.filter_dialogs(filters)
                 self.log(f"Получено диалогов после фильтрации: {len(self.dialogs)}")
-                if self.dialog_search_var.get().strip():
-                    search_text = self.dialog_search_var.get().lower()
-                    original_count = len(self.dialogs)
-                    self.dialogs = [dialog for dialog in self.dialogs if search_text in dialog['name'].lower()]
-                    self.log(f"После локальной фильтрации по '{search_text}': {len(self.dialogs)} из {original_count}")
                 
                 self.dialogs_tree.delete(*self.dialogs_tree.get_children())
                 
