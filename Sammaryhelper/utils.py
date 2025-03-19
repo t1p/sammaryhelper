@@ -67,10 +67,12 @@ def load_settings(app_dir: str) -> Dict[str, Any]:
         if os.path.exists(settings_path):
             with open(settings_path, 'r', encoding='utf-8') as f:
                 loaded_settings = json.load(f)
-                print(f"Настройки загружены из {settings_path}: {loaded_settings}")
+                if loaded_settings.get('debug', False):
+                    print(f"Настройки загружены из {settings_path}: {loaded_settings}")
                 return loaded_settings
     except Exception as e:
-        print(f"Ошибка при загрузке настроек: {e}")
+        if loaded_settings.get('debug', False):
+            print(f"Ошибка при загрузке настроек: {e}")
     return {}
 
 def save_settings(app_dir: str, settings: Dict[str, Any]) -> None:
@@ -100,4 +102,5 @@ def save_settings(app_dir: str, settings: Dict[str, Any]) -> None:
         if settings.get('debug', False):
             print(f"Настройки сохранены в {settings_path}")
     except Exception as e:
-        print(f"Ошибка при сохранении настроек: {e}")
+        if settings.get('debug', False):
+            print(f"Ошибка при сохранении настроек: {e}")

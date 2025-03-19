@@ -10,7 +10,7 @@
   "last_config": "config_0707",
   "max_dialogs": "20",
   "max_messages": "200",
-  "debug": true,
+  "debug": false,
   "window_state": {
     "geometry": "1902x991+1+1"
   }
