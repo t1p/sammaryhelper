@@ -108,7 +108,7 @@ class TelegramViewer:
     def load_settings(self):
         """Загрузка настроек из файла"""
         try:
-            settings_path = os.path.join(self.app_dir, 'Sammaryhelper', 'summarizer_settings.json')
+            settings_path = os.path.join(self.app_dir, 'Sammaryhelper', 'sh_profile.json')
             if os.path.exists(settings_path):
                 with open(settings_path, 'r', encoding='utf-8') as f:
                     settings = json.load(f)

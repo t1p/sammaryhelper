@@ -17,6 +17,6 @@ Sammaryhelper/configs/
 Sammaryhelper/sessions/
 .vscode/
 Sammaryhelper.egg-info/
-Sammaryhelper/summarizer_settings.json
+Sammaryhelper/sh_profile.json
 .roomodes
 .git/
