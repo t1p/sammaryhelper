@@ -1,3 +1,4 @@
+import os
 import openai
 import tiktoken
 from typing import List, Dict, Any
@@ -140,7 +141,7 @@ class AIChatManager:
         for i, chunk in enumerate(chunks):
             chunk_prompt = f"""{user_prompt}
 
-{'\n'.join(chunk)}
+{os.linesep.join(chunk)}
 
 Краткое содержание:"""
 
@@ -160,7 +161,7 @@ class AIChatManager:
             try:
                 final_prompt = f"""Объедини следующие саммари частей переписки в одно краткое и связное содержание:
 
-{''.join(f"Часть {i+1}:\n{summary}\n\n" for i, summary in enumerate(summaries))}
+{''.join(f"Часть {i+1}:{os.linesep}{summary}{os.linesep}{os.linesep}" for i, summary in enumerate(summaries))}
 
 Общее краткое содержание:"""
 
