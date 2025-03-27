@@ -927,7 +927,7 @@ class TelegramSummarizerGUI:
                 self.dialogs_tree.delete(*self.dialogs_tree.get_children())
                 
                 for dialog in self.dialogs:
-                    folder_name = f"Папка {dialog['folder_id']}" if dialog['folder_id'] is not None else "Без папки"
+                    folder_name = f"Папка {dialog['folder_id']}" if dialog.get('folder_id') is not None else "Без папки"
                     unread_count = dialog.get('unread_count', 0)
                     
                     # Выводим отладочную информацию
@@ -979,7 +979,7 @@ class TelegramSummarizerGUI:
         
         # Заполняем список диалогов
         for dialog in filtered_dialogs:
-            folder_name = f"Папка {dialog['folder_id']}" if dialog['folder_id'] is not None else "Без папки"
+            folder_name = f"Папка {dialog['folder_id']}" if dialog.get('folder_id') is not None else "Без папки"
             unread_count = dialog.get('unread_count', 0)
             
             self.dialogs_tree.insert('', 'end', values=(
@@ -1834,10 +1834,36 @@ db_settings = {{
             self.root.after(0, update_ui_start)
             
             # Вызываем метод поиска в нескольких чатах
-            results = await self.client_manager.search_multiple_chats(
-                dialog_ids=dialog_ids,
-                search_params=search_params
-            )
+            results = {}
+            text_value = search_params.get('text', '').lower()
+            sender_value = search_params.get('sender', '').lower()
+            date_value = search_params.get('date', '')
+            reply_status = search_params.get('reply_status', 'all')
+            for did in dialog_ids:
+                messages = await self.client_manager.filter_messages(did, search_params)
+                filtered = []
+                for m in messages:
+                    # Фильтрация по тексту
+                    if text_value and text_value not in m['text'].lower():
+                        continue
+                    # Фильтрация по отправителю
+                    sender_field = m.get('sender_name') or m.get('sender') or ''
+                    if sender_value and sender_value not in sender_field.lower():
+                        continue
+                    # Фильтрация по дате (ожидается формат ГГГГ-ММ-ДД)
+                    if date_value:
+                        m_date = m['date'] if isinstance(m['date'], str) else m['date'].strftime('%Y-%m-%d')
+                        if date_value not in m_date:
+                            continue
+                    # Фильтрация по статусу ответа, если требуется
+                    if reply_status != 'all':
+                        if reply_status == 'replied' and not m.get('replied', False):
+                            continue
+                        if reply_status == 'not_replied' and m.get('replied', False):
+                            continue
+                    filtered.append(m)
+                results[did] = filtered
+            self.log(f"[ПОИСК] Получены результаты поиска для {len(results)} диалогов после локальной фильтрации")
             
             # Выводим отчет о результатах
             total_results = sum(len(chat_results) for chat_results in results.values())
