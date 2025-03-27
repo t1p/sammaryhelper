@@ -1,6 +1,6 @@
 # Виртуальное окружение
 venv/
-
+.venv/
 # Кэш Python
 __pycache__/
 *.pyc
@@ -16,7 +16,6 @@ logs/
 Sammaryhelper/configs/
 Sammaryhelper/sessions/
 .vscode/
-.gitignore
 Sammaryhelper.egg-info/
 Sammaryhelper/summarizer_settings.json
 .roomodes
