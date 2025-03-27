@@ -927,7 +927,7 @@ class TelegramSummarizerGUI:
                 self.dialogs_tree.delete(*self.dialogs_tree.get_children())
                 
                 for dialog in self.dialogs:
-                    folder_name = f"Папка {dialog['folder_id']}" if dialog['folder_id'] is not None else "Без папки"
+                    folder_name = f"Папка {dialog['folder_id']}" if dialog.get('folder_id') is not None else "Без папки"
                     unread_count = dialog.get('unread_count', 0)
                     
                     # Выводим отладочную информацию
@@ -979,7 +979,7 @@ class TelegramSummarizerGUI:
         
         # Заполняем список диалогов
         for dialog in filtered_dialogs:
-            folder_name = f"Папка {dialog['folder_id']}" if dialog['folder_id'] is not None else "Без папки"
+            folder_name = f"Папка {dialog['folder_id']}" if dialog.get('folder_id') is not None else "Без папки"
             unread_count = dialog.get('unread_count', 0)
             
             self.dialogs_tree.insert('', 'end', values=(

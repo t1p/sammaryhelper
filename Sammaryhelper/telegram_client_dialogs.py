@@ -17,7 +17,9 @@ class TelegramClientDialogs(TelegramClientBase):
                 'id': dialog.id,
                 'name': dialog.name,
                 'type': dialog_type,
-                'entity': dialog.entity
+                'entity': dialog.entity,
+                'folder_id': dialog.folder if hasattr(dialog, 'folder') else None,
+                'unread_count': getattr(dialog, 'unread_count', 0)
             })
         return dialogs
 
@@ -133,7 +135,9 @@ class TelegramClientDialogs(TelegramClientBase):
                         'id': dialog.id,
                         'name': dialog.name,
                         'type': dialog_type,
-                        'entity': dialog.entity
+                        'entity': dialog.entity,
+                        'folder_id': dialog.folder if hasattr(dialog, 'folder') else None,
+                        'unread_count': getattr(dialog, 'unread_count', 0)
                     })
             
             return dialogs
