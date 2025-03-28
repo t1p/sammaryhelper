@@ -670,7 +670,7 @@ class TelegramSummarizerGUI:
     def save_settings(self):
         """Сохранение настроек в файл"""
         try:
-            settings_path = os.path.join(self.app_dir, 'sh_profile.json')
+            settings_path = os.path.join(self.app_dir, 'configs', 'sh_profile.json')
             self.log(f"Попытка сохранения настроек в {settings_path}")
             
             # Обновляем настройки перед сохранением
@@ -1510,7 +1510,7 @@ db_settings = {{
     def load_window_state(self):
         """Загрузка состояния окна"""
         try:
-            settings_path = os.path.join(self.app_dir, 'sh_profile.json')
+            settings_path = os.path.join(self.app_dir, 'configs', 'sh_profile.json')
             self.log(f"Попытка загрузки состояния окна из {settings_path}")
             
             with open(settings_path, 'r', encoding='utf-8') as f:
@@ -1528,7 +1528,7 @@ db_settings = {{
     def save_window_state(self):
         """Сохранение состояния окна"""
         try:
-            settings_path = os.path.join(self.app_dir, 'sh_profile.json')
+            settings_path = os.path.join(self.app_dir, 'configs', 'sh_profile.json')
             self.log(f"Попытка сохранения состояния окна в {settings_path}")
             
             try:

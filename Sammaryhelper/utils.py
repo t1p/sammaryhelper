@@ -62,7 +62,7 @@ openai_api_key = 'your_openai_api_key_here'  # Замените на ваш кл
 
 def load_settings(app_dir: str) -> Dict[str, Any]:
     """Загрузка настроек из файла"""
-    settings_path = os.path.join(app_dir, 'sh_profile.json')
+    settings_path = os.path.join(app_dir, 'configs', 'sh_profile.json')
     try:
         if os.path.exists(settings_path):
             with open(settings_path, 'r', encoding='utf-8') as f:
