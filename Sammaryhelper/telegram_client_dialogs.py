@@ -9,16 +9,29 @@ class TelegramClientDialogs(TelegramClientBase):
     """Класс для работы с диалогами и поиском в Telegram API"""
     
     async def get_dialogs(self):
-        """Получение списка диалогов"""
+        """Получение списка диалогов с информацией о папках"""
         dialogs = []
+        folders = await self.get_dialog_folders()
+        
         async for dialog in self.client.iter_dialogs():
             dialog_type = "Канал" if isinstance(dialog.entity, Channel) else "Чат" if dialog.is_group else "Личка"
+            
+            # Определяем папку для диалога
+            folder_info = None
+            if hasattr(dialog, 'folder') and dialog.folder:
+                folder_id = dialog.folder.id
+                if folder_id in folders:
+                    folder_info = {
+                        'id': folder_id,
+                        'title': folders[folder_id]['title']
+                    }
+            
             dialogs.append({
                 'id': dialog.id,
                 'name': dialog.name,
                 'type': dialog_type,
                 'entity': dialog.entity,
-                'folder_id': dialog.folder if hasattr(dialog, 'folder') else None,
+                'folder': folder_info,
                 'unread_count': getattr(dialog, 'unread_count', 0)
             })
         return dialogs
@@ -38,17 +51,40 @@ class TelegramClientDialogs(TelegramClientBase):
         except Exception as e:
             raise Exception(f"Ошибка при получении участников чата: {e}")
 
-    async def get_dialog_folders(self) -> Dict[int, str]:
-        """Получение папок и их содержимого"""
+    async def get_dialog_folders(self) -> Dict[int, Dict[str, Any]]:
+        """Получение структуры папок через Telegram API"""
         try:
             folders = {}
-            result = await self.client(functions.messages.GetDialogFilters())
-            for folder in result:
-                for peer in folder.pinned_peers:
-                    folders[peer.channel_id] = folder.title
+            
+            # Пробуем получить папки через GetDialogFiltersRequest
+            try:
+                result = await self.client(functions.messages.GetDialogFiltersRequest())
+                for folder in result:
+                    folders[folder.id] = {
+                        'title': folder.title,
+                        'id': folder.id,
+                        'dialogs': []
+                    }
+                    # Получаем диалоги для каждой папки
+                    dialogs = await self.client.get_dialogs(folder=folder.id)
+                    folders[folder.id]['dialogs'] = [d.id for d in dialogs]
+            except AttributeError:
+                # Fallback для старых версий или если метод не доступен
+                dialogs = await self.client.get_dialogs(folder=0)
+                for dialog in dialogs:
+                    if hasattr(dialog, 'folder') and dialog.folder:
+                        if dialog.folder.id not in folders:
+                            folders[dialog.folder.id] = {
+                                'title': f"Папка {dialog.folder.id}",
+                                'id': dialog.folder.id,
+                                'dialogs': []
+                            }
+                        folders[dialog.folder.id]['dialogs'].append(dialog.id)
+            
             return folders
         except Exception as e:
-            raise Exception(f"Ошибка при получении папок: {e}")
+            self.log(f"Ошибка при получении папок: {e}")
+            return {}
 
     async def filter_dialogs(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Фильтрация диалогов по заданным критериям"""
@@ -66,6 +102,9 @@ class TelegramClientDialogs(TelegramClientBase):
             me = await self.client.get_me()
             account_id = str(me.phone) if me.phone else me.username
             self.log(f"ID аккаунта: {account_id}")
+            
+            # Получаем структуру папок
+            folders = await self.get_dialog_folders()
             
             # Используем кеш для получения данных только если не требуется обновление
             dialogs = []
@@ -87,13 +126,23 @@ class TelegramClientDialogs(TelegramClientBase):
                     async for dialog in self.client.iter_dialogs(limit=limit):
                         dialog_type = "Канал" if isinstance(dialog.entity, Channel) else "Чат" if dialog.is_group else "Личка"
                         
+                        # Определяем папку для диалога
+                        folder_info = None
+                        if hasattr(dialog, 'folder') and dialog.folder:
+                            folder_id = dialog.folder.id
+                            if folder_id in folders:
+                                folder_info = {
+                                    'id': folder_id,
+                                    'title': folders[folder_id]['title']
+                                }
+                        
                         api_dialogs.append({
                             'id': dialog.id,
                             'name': dialog.name,
                             'type': dialog_type,
                             'entity': dialog.entity,
-                            'folder_id': dialog.folder_id,
-                            'unread_count': dialog.unread_count
+                            'folder': folder_info,
+                            'unread_count': getattr(dialog, 'unread_count', 0)
                         })
                     
                     self.log(f"Получено {len(api_dialogs)} диалогов из Telegram API")
@@ -101,7 +150,13 @@ class TelegramClientDialogs(TelegramClientBase):
                     # Кешируем диалоги из API
                     dialogs_to_cache = []
                     for dialog in api_dialogs:
-                        dialog_copy = dialog.copy()
+                        dialog_copy = {
+                            'id': dialog['id'],
+                            'name': dialog['name'],
+                            'type': dialog['type'],
+                            'folder': dialog['folder'],
+                            'unread_count': dialog['unread_count']
+                        }
                         if 'entity' in dialog_copy:
                             del dialog_copy['entity']
                         dialogs_to_cache.append(dialog_copy)
