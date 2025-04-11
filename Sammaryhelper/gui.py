@@ -600,6 +600,25 @@ class TelegramSummarizerGUI:
         # Привязываем обработчик изменения конфига
         self.config_combo.bind('<<ComboboxSelected>>', self.on_config_change)
 
+    async def update_models_list(self):
+        """Обновление списка доступных моделей OpenAI"""
+        try:
+            models = await self.ai_manager.get_available_models()
+            model_ids = [model['id'] for model in models]
+            self.model_combo['values'] = model_ids
+            self.settings['available_models'] = model_ids
+            return True
+        except Exception as e:
+            print(f"Ошибка при обновлении списка моделей: {e}")
+            return False
+
+    def on_model_select(self, event):
+        """Обработчик выбора модели"""
+        selected_model = self.model_var.get()
+        if selected_model:
+            self.settings['openai_model'] = selected_model
+            print(f"Выбрана модель: {selected_model}")
+
     def setup_settings_tab(self):
         """Настройка вкладки настроек"""
         # Выбор модели
@@ -608,6 +627,15 @@ class TelegramSummarizerGUI:
         self.model_combo = ttk.Combobox(self.settings_frame, textvariable=self.model_var)
         self.model_combo['values'] = self.settings['available_models']
         self.model_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5, pady=5)
+        self.model_combo.bind('<<ComboboxSelected>>', self.on_model_select)
+        
+        # Кнопка обновления списка моделей
+        self.update_models_btn = ttk.Button(
+            self.settings_frame,
+            text="Обновить список",
+            command=lambda: asyncio.create_task(self.update_models_list())
+        )
+        self.update_models_btn.grid(row=0, column=2, padx=5, pady=5)
         
         # Системный промпт
         ttk.Label(self.settings_frame, text="Системный промпт:").grid(row=1, column=0, sticky=tk.W, pady=5)
@@ -646,7 +674,7 @@ class TelegramSummarizerGUI:
         self.app_version_combo.grid(row=8, column=1, sticky=(tk.W, tk.E), padx=5)
         
         # Кнопка применения версии клиента
-        self.apply_version_btn = ttk.Button(self.settings_frame, text="Применить версию", 
+        self.apply_version_btn = ttk.Button(self.settings_frame, text="Применить версию",
                                           command=self.apply_client_version)
         self.apply_version_btn.grid(row=9, column=0, columnspan=2, pady=10)
         
