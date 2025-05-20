@@ -61,7 +61,7 @@ class ToolTip:
         tw.wm_geometry(f"+{x}+{y}")
         
         # Используем системные стили
-        bg = self.widget.cget('background') or 'SystemButtonFace'
+        bg = 'SystemButtonFace'
         fg = self.widget.cget('foreground') or 'SystemWindowText'
         font = self.widget.cget('font') or ('Arial', '10', 'normal')
         
@@ -143,32 +143,66 @@ class TelegramSummarizerGUI:
         saved_settings = load_settings(self.app_dir)
         self.settings.update(saved_settings)
         
-        # Устанавливаем состояние чекбокса "Дебаг"
         self.debug_var = tk.BooleanVar(value=self.settings.get('debug', False))
-        
+
+        # Определяем имя последнего использованного конфига
+        config_name = self.settings.get('last_config', '')
+
+        # Загружаем настройки из выбранного файла конфига (*.py)
+        # и добавляем их в self.settings перед инициализацией менеджеров
+        try:
+            config_path = os.path.join(self.app_dir, "configs", f"{config_name}.py")
+            loaded_config = load_config(config_path)
+            # Добавляем ключи из конфига в settings, перезаписывая значения из sh_profile.json при совпадении
+            if hasattr(loaded_config, 'api_id'): self.settings['api_id'] = loaded_config.api_id
+            if hasattr(loaded_config, 'api_hash'): self.settings['api_hash'] = loaded_config.api_hash
+            if hasattr(loaded_config, 'openai_api_key'): self.settings['openai_api_key'] = loaded_config.openai_api_key
+            if hasattr(loaded_config, 'use_proxy'): self.settings['use_proxy'] = loaded_config.use_proxy
+            if hasattr(loaded_config, 'proxy_settings'): self.settings['proxy_settings'] = loaded_config.proxy_settings
+            if hasattr(loaded_config, 'db_settings'): self.settings['db_settings'] = loaded_config.db_settings
+            self.log(f"Настройки из конфига '{config_name}.py' загружены и добавлены в self.settings.")
+        except FileNotFoundError:
+            self.log(f"Файл конфига '{config_name}.py' не найден. Использование настроек из sh_profile.json.")
+        except Exception as e:
+            self.log(f"Ошибка при загрузке конфига '{config_name}.py': {e}")
+
+        # Устанавливаем состояние чекбокса "Дебаг"
+
         self.setup_main_tab()
         self.setup_config_tab()  # Добавляем настройку новой вкладки
         self.setup_settings_tab()
-        
-        # Инициализируем client_manager
-        config_name = self.config_var.get()
-        self.settings['last_config'] = config_name
-        self.save_settings()
-        
+
+        # Инициализируем client_manager и ai_manager с обновленными настройками
         self.client_manager = TelegramClientManager({
-            'config_name': config_name,
+            'config_name': config_name, # config_name все еще нужен для client_manager
             'app_dir': self.app_dir,
-            'debug': self.debug_var.get()
+            'debug': self.debug_var.get(),
+            # Передаем другие настройки клиента, если они есть в self.settings
+            'system_version': self.settings.get('system_version'),
+            'device_model': self.settings.get('device_model'),
+            'app_version': self.settings.get('app_version')
         })
+        # Теперь self.settings содержит API ключ из конфига (если он был найден)
         self.ai_manager = AIChatManager(self.settings)
+
         self.dialogs = []
         self.messages = []  # Добавляем атрибут для хранения сообщений
-        
+
+        # Устанавливаем значение config_var после загрузки настроек
+        config_files = get_config_files(self.app_dir)
+        self.config_combo['values'] = config_files
+        if config_name in config_files:
+             self.config_combo.set(config_name)
+        elif config_files:
+             self.config_combo.set(config_files[0])
+             self.settings['last_config'] = config_files[0] # Обновляем last_config если выбран первый файл
+             self.save_settings() # Сохраняем обновленный last_config
+
         self.config_combo.bind('<<ComboboxSelected>>', self.on_config_change)
-        
+
         # Загружаем состояние окна
         self.load_window_state()
-        
+
         # Привязываем событие закрытия окна
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
     
@@ -858,36 +892,98 @@ class TelegramSummarizerGUI:
         self.config_combo.bind('<<ComboboxSelected>>', self.on_config_change)
     async def update_models_list(self):
         """Обновление списка доступных моделей OpenAI"""
-        if not self._ensure_loop_active():
-            return
-        
+        self.log("[МОДЕЛИ] Попытка обновления списка моделей...")
         try:
-            models = await self.ai_handler.get_available_models()
-            self.settings['available_models'] = models
-            self.model_combo['values'] = models
+            self._ensure_loop_active()
+            
+            # Получаем полный список моделей
+            all_models = await self.ai_manager.get_available_models()
+            
+            # Фильтруем модели, исключая специализированные
+            filtered_models = []
+            for model in all_models:
+                # Проверяем, требует ли модель специальных возможностей
+                is_specialized = False
+                
+                # Проверка по ID модели
+                model_id = model['id']
+                if ("audio" in model_id or
+                    "whisper" in model_id or
+                    "dall-e" in model_id or
+                    "vision" in model_id):
+                    is_specialized = True
+                    self.log(f"[МОДЕЛИ] Исключена специализированная модель: {model_id}")
+                
+                # Проверка по возможностям модели
+                capabilities = model.get('capabilities', {})
+                if capabilities.get('requires_audio') or capabilities.get('requires_vision'):
+                    is_specialized = True
+                    self.log(f"[МОДЕЛИ] Исключена модель с особыми требованиями: {model_id}")
+                
+                # Добавляем модель, если она не специализированная
+                if not is_specialized:
+                    filtered_models.append(model)
+            
+            # Добавляем алиасы моделей для удобства
+            model_aliases = [
+                {"id": "gpt4-latest", "description": "Последняя версия GPT-4", "alias_for": "gpt-4o"},
+                {"id": "gpt3-latest", "description": "Последняя версия GPT-3.5", "alias_for": "gpt-3.5-turbo"}
+            ]
+            
+            # Объединяем отфильтрованные модели и алиасы
+            display_models = filtered_models + model_aliases
+            
+            # Сохраняем полный список моделей для внутреннего использования
+            self.settings['all_models'] = all_models
+            
+            # Сохраняем отфильтрованный список для отображения
+            self.settings['available_models'] = display_models
+            
+            # Создаем список ID моделей для отображения в комбобоксе
+            model_ids = [m['id'] for m in display_models]
+            
+            # Добавляем информативное сообщение в лог
+            if not display_models:
+                self.log("[МОДЕЛИ] Получен пустой список моделей после фильтрации.")
+            
+            # Обновление UI должно происходить в основном потоке Tkinter
+            self.root.after(0, lambda: self.model_combo.config(values=model_ids))
+            self.log(f"[МОДЕЛИ] Список моделей успешно обновлен. Найдено {len(display_models)} моделей после фильтрации.")
         except Exception as e:
+            self.log(f"[МОДЕЛИ] Ошибка при обновлении моделей: {str(e)}")
             messagebox.showerror("Ошибка", f"Не удалось обновить модели: {str(e)}")
 
     def _update_models_handler(self):
         """Обработчик кнопки обновления моделей с использованием asyncio"""
-        if not hasattr(self, 'loop') or not self.loop.is_running():
-            messagebox.showerror("Ошибка", "Event loop не активен")
-            return
-            
         try:
+            self.log("[МОДЕЛИ] Запуск асинхронной задачи обновления моделей...") # Add logging
             asyncio.run_coroutine_threadsafe(
                 self.update_models_list(),
                 self.loop
             )
         except Exception as e:
+            self.log(f"[МОДЕЛИ] Ошибка при запуске асинхронной задачи обновления: {str(e)}") # Add logging in except
             messagebox.showerror("Ошибка", f"Ошибка при запуске обновления: {str(e)}")
 
     def on_model_select(self, event):
         """Обработчик выбора модели"""
         selected_model = self.model_var.get()
         if selected_model:
+            # Проверяем, является ли выбранная модель алиасом
+            model_aliases = {
+                'gpt4-latest': 'gpt-4o',
+                'gpt3-latest': 'gpt-3.5-turbo'
+            }
+            
+            # Если выбран алиас, сохраняем его, но логируем реальную модель
+            if selected_model in model_aliases:
+                actual_model = model_aliases[selected_model]
+                self.log(f"[МОДЕЛИ] Выбран алиас '{selected_model}', будет использована модель: {actual_model}")
+            else:
+                self.log(f"[МОДЕЛИ] Выбрана модель: {selected_model}")
+            
+            # Сохраняем выбранную модель в настройках
             self.settings['openai_model'] = selected_model
-            print(f"Выбрана модель: {selected_model}")
 
     def setup_settings_tab(self):
         """Настройка вкладки настроек"""
@@ -895,9 +991,20 @@ class TelegramSummarizerGUI:
         ttk.Label(self.settings_frame, text="Модель OpenAI:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.model_var = tk.StringVar(value=self.settings['openai_model'])
         self.model_combo = ttk.Combobox(self.settings_frame, textvariable=self.model_var)
-        self.model_combo['values'] = self.settings['available_models']
+        
+        # Получаем список ID моделей для отображения
+        if 'available_models' in self.settings and isinstance(self.settings['available_models'], list):
+            if all(isinstance(m, dict) for m in self.settings['available_models']):
+                model_ids = [m['id'] for m in self.settings['available_models']]
+                self.model_combo['values'] = model_ids
+            else:
+                self.model_combo['values'] = self.settings['available_models']
+        
         self.model_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5, pady=5)
         self.model_combo.bind('<<ComboboxSelected>>', self.on_model_select)
+        
+        # Добавляем подсказку для комбобокса моделей
+        self.create_tooltip(self.model_combo, "Выберите модель OpenAI. Алиасы 'gpt4-latest' и 'gpt3-latest' автоматически используют последние версии моделей.")
         
         # Кнопка обновления списка моделей
         self.update_models_btn = ttk.Button(
@@ -1001,6 +1108,7 @@ class TelegramSummarizerGUI:
     def _ensure_loop_active(self):
         """Проверяет, активен ли event loop"""
         if not hasattr(self, 'loop') or self.loop is None or self.loop.is_closed():
+            self.log("[ОШИБКА] Event loop не активен при попытке выполнения асинхронной задачи.") # Add logging
             raise RuntimeError("Event loop не активен")
 
     def run(self):
@@ -1144,22 +1252,46 @@ class TelegramSummarizerGUI:
                     if hasattr(self.client_manager, 'client') and self.client_manager.client is not None:
                         if self.client_manager.client.is_connected():
                             await self.client_manager.client.disconnect()
-                
-                # Создаем новый клиент
+
+                # Загружаем настройки из нового файла конфига (*.py)
+                # и обновляем self.settings перед инициализацией менеджеров
+                try:
+                    config_path = os.path.join(self.app_dir, "configs", f"{config_name}.py")
+                    loaded_config = load_config(config_path)
+                    # Обновляем self.settings с новыми значениями из конфига
+                    if hasattr(loaded_config, 'api_id'): self.settings['api_id'] = loaded_config.api_id
+                    if hasattr(loaded_config, 'api_hash'): self.settings['api_hash'] = loaded_config.api_hash
+                    if hasattr(loaded_config, 'openai_api_key'): self.settings['openai_api_key'] = loaded_config.openai_api_key
+                    if hasattr(loaded_config, 'use_proxy'): self.settings['use_proxy'] = loaded_config.use_proxy
+                    if hasattr(loaded_config, 'proxy_settings'): self.settings['proxy_settings'] = loaded_config.proxy_settings
+                    if hasattr(loaded_config, 'db_settings'): self.settings['db_settings'] = loaded_config.db_settings
+                    self.log(f"Настройки из нового конфига '{config_name}.py' загружены и обновлены в self.settings.")
+                except FileNotFoundError:
+                    self.log(f"Файл конфига '{config_name}.py' не найден. Использование текущих настроек из sh_profile.json.")
+                except Exception as e:
+                    self.log(f"Ошибка при загрузке нового конфига '{config_name}.py': {e}")
+
+                # Создаем новый клиент и AI менеджер с обновленными настройками
                 self.client_manager = TelegramClientManager({
                     'config_name': config_name,
                     'app_dir': self.app_dir,
-                    'debug': self.debug_var.get()
+                    'debug': self.debug_var.get(),
+                    # Передаем другие настройки клиента, если они есть в self.settings
+                    'system_version': self.settings.get('system_version'),
+                    'device_model': self.settings.get('device_model'),
+                    'app_version': self.settings.get('app_version')
                 })
-                
+                # Инициализируем ai_manager с обновленными настройками
+                self.ai_manager = AIChatManager(self.settings)
+
                 # Очищаем список диалогов
                 self.dialogs = []
                 self.dialogs_tree.delete(*self.dialogs_tree.get_children())
-                self.log(f"Выбран конфиг: {config_name}")
-                
+                self.log(f"Выбран конфиг: {config_name}. Клиент и AI менеджер переинициализированы.")
+
                 # Пробуем инициализировать клиент
                 await self.client_manager.init_client()
-                
+
             except Exception as e:
                 self.log(f"Ошибка при смене конфига: {e}")
             finally:
@@ -1421,8 +1553,21 @@ db_settings = {{
         
         async def process_ai_request():
             try:
+                # Проверяем, что client_manager существует и не равен None
+                if not self.client_manager:
+                    # Если client_manager не существует или равен None, создаем его
+                    self.client_manager = TelegramClientManager({
+                        'config_name': self.config_var.get(),
+                        'app_dir': self.app_dir,
+                        'debug': self.debug_var.get(),
+                        'system_version': self.settings.get('system_version'),
+                        'device_model': self.settings.get('device_model'),
+                        'app_version': self.settings.get('app_version')
+                    })
+                    self.log("Создан новый экземпляр TelegramClientManager в process_ai_request")
+                    
                 # Проверяем, что клиент инициализирован
-                if not self.client_manager or not hasattr(self.client_manager, 'client') or not self.client_manager.client.is_connected():
+                if not hasattr(self.client_manager, 'client') or self.client_manager.client is None or not self.client_manager.client.is_connected():
                     if not await self.client_manager.init_client():
                         self.log("Ошибка: клиент не инициализирован")
                         return
