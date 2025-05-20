@@ -109,7 +109,8 @@ class TelegramSummarizerGUI:
         self.loop = asyncio.new_event_loop()
         self.running = True
         self.loop_thread = None
-        self._ensure_loop_created()
+        # Удален избыточный вызов, так как loop уже создан выше
+        # self._ensure_loop_created()
         
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(fill='both', expand=True, padx=5, pady=5)
@@ -867,19 +868,19 @@ class TelegramSummarizerGUI:
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось обновить модели: {str(e)}")
 
-def _update_models_handler(self):
-    """Обработчик кнопки обновления моделей с использованием asyncio"""
-    if not hasattr(self, 'loop') or not self.loop.is_running():
-        messagebox.showerror("Ошибка", "Event loop не активен")
-        return
-        
-    try:
-        asyncio.run_coroutine_threadsafe(
-            self.update_models_list(),
-            self.loop
-        )
-    except Exception as e:
-        messagebox.showerror("Ошибка", f"Ошибка при запуске обновления: {str(e)}")
+    def _update_models_handler(self):
+        """Обработчик кнопки обновления моделей с использованием asyncio"""
+        if not hasattr(self, 'loop') or not self.loop.is_running():
+            messagebox.showerror("Ошибка", "Event loop не активен")
+            return
+            
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self.update_models_list(),
+                self.loop
+            )
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка при запуске обновления: {str(e)}")
 
     def on_model_select(self, event):
         """Обработчик выбора модели"""
