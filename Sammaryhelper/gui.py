@@ -1,5 +1,81 @@
 import os
 import tkinter as tk
+from tkinter import ttk
+import time
+
+class ToolTip:
+    """Класс для создания всплывающих подсказок"""
+    def __init__(self, widget, text='', delay=None):
+        self.widget = widget
+        self.text = text
+        self.delay = delay if delay is not None else 500  # Значение по умолчанию
+        self.tip_window = None
+        self.id = None
+        self.x = self.y = 0
+        self.hovering = False
+        
+        # Привязываем обработчики событий
+        self.widget.bind('<Enter>', self.on_enter)
+        self.widget.bind('<Leave>', self.on_leave)
+        self.widget.bind('<ButtonPress>', self.hide_tip)
+        self.widget.bind('<Motion>', self.on_motion)
+
+    def on_enter(self, event=None):
+        """Обработчик входа курсора"""
+        self.hovering = True
+        self.schedule_show_tip()
+
+    def on_leave(self, event=None):
+        """Обработчик выхода курсора"""
+        self.hovering = False
+        self.hide_tip()
+        if self.id:
+            self.widget.after_cancel(self.id)
+            self.id = None
+
+    def on_motion(self, event=None):
+        """Обработчик перемещения курсора"""
+        if self.tip_window and self.hovering:
+            x, y, _, _ = self.widget.bbox("insert")
+            x += self.widget.winfo_rootx() + 25
+            y += self.widget.winfo_rooty() + 25
+            self.tip_window.wm_geometry(f"+{x}+{y}")
+
+    def schedule_show_tip(self):
+        """Запланировать показ подсказки"""
+        if self.id:
+            self.widget.after_cancel(self.id)
+        self.id = self.widget.after(self.delay, self.show_tip)
+
+    def show_tip(self, event=None):
+        """Показать подсказку"""
+        if self.tip_window or not self.text or not self.hovering:
+            return
+            
+        x, y, _, _ = self.widget.bbox("insert")
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 25
+        
+        self.tip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        
+        # Используем системные стили
+        bg = self.widget.cget('background') or 'SystemButtonFace'
+        fg = self.widget.cget('foreground') or 'SystemWindowText'
+        font = self.widget.cget('font') or ('Arial', '10', 'normal')
+        
+        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
+                        background=bg, foreground=fg,
+                        relief=tk.SOLID, borderwidth=1,
+                        font=font)
+        label.pack(ipadx=1)
+
+    def hide_tip(self, event=None):
+        """Скрыть подсказку"""
+        if self.tip_window:
+            self.tip_window.destroy()
+        self.tip_window = None
 from tkinter import ttk, messagebox, scrolledtext
 import asyncio
 import threading
@@ -19,6 +95,12 @@ class TelegramSummarizerGUI:
         self.root = root
         self.root.title("Telegram Channel Summarizer")
         self.root.geometry("900x700")
+        self.root.minsize(600, 400)  # Минимальный размер окна
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
+        
+        # Привязываем обработчик изменения размеров окна
+        self.root.bind('<Configure>', self.on_window_resize)
         
         # Настройка стиля приложения
         self.setup_styles()
@@ -50,7 +132,8 @@ class TelegramSummarizerGUI:
             ],
             'last_config': None,
             'max_dialogs': '100',
-            'max_messages': '100'
+            'max_messages': '100',
+            'tooltip_delay': 500  # Время задержки показа подсказок (мс)
         }
         
         # Загружаем сохраненные настройки
@@ -86,6 +169,11 @@ class TelegramSummarizerGUI:
         # Привязываем событие закрытия окна
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
     
+    def create_tooltip(self, widget, text):
+        """Создание подсказки с учетом настроек"""
+        delay = self.settings.get('tooltip_delay', 500)
+        return ToolTip(widget, text, delay=delay)
+        
     def setup_styles(self):
         """Настройка стилей для улучшения внешнего вида"""
         style = ttk.Style()
@@ -106,6 +194,96 @@ class TelegramSummarizerGUI:
         style.configure('Treeview', background='#ffffff', font=('Arial', 10))
         style.configure('Treeview.Heading', font=('Arial', 10, 'bold'))
     
+    def on_window_resize(self, event):
+        """Обработчик изменения размеров окна"""
+        # Игнорируем события от дочерних виджетов
+        if event.widget != self.root:
+            return
+            
+        # Игнорируем слишком частые вызовы (дебаунсинг)
+        current_time = time.time()
+        if hasattr(self, 'last_resize_time') and current_time - self.last_resize_time < 0.1:
+            return
+        self.last_resize_time = current_time
+            
+        # Инициализируем начальные размеры и пропорции при первом вызове
+        if not hasattr(self, 'initial_window_size'):
+            self.initial_window_size = (self.root.winfo_width(), self.root.winfo_height())
+            self.initial_pane_weights = {'main': [1, 1, 2], 'msg': [2, 1], 'bottom': [1, 1]}
+            
+        # Обновляем пропорции панелей при изменении размеров окна
+        if hasattr(self, 'main_paned') and hasattr(self, 'msg_paned') and hasattr(self, 'bottom_paned'):
+            self.update_pane_proportions()
+            
+    def update_pane_proportions(self):
+        """Обновление пропорций панелей при изменении размеров окна"""
+        # Получаем текущие размеры окна
+        current_width = self.root.winfo_width()
+        current_height = self.root.winfo_height()
+        
+        # Пропорционально изменяем размеры панелей
+        if hasattr(self, 'initial_window_size'):
+            width_ratio = current_width / self.initial_window_size[0]
+            height_ratio = current_height / self.initial_window_size[0]
+            
+            # Обновляем размеры панелей, если они существенно изменились
+            if abs(width_ratio - 1.0) > 0.1 or abs(height_ratio - 1.0) > 0.1:
+                # Обновляем пропорции основной панели
+                if hasattr(self, 'main_paned'):
+                    try:
+                        # Получаем текущие размеры панелей
+                        panes = self.main_paned.panes()
+                        if len(panes) == 3:  # Если у нас 3 панели
+                            # Устанавливаем пропорции согласно сохраненным весам
+                            weights = self.initial_pane_weights.get('main', [1, 1, 2])
+                            total_width = sum(weights)
+                            
+                            # Устанавливаем позиции разделителей (sash) с учетом пропорций
+                            available_width = current_width - 20  # Учитываем отступы
+                            sash_pos1 = int(available_width * weights[0] / total_width)
+                            sash_pos2 = int(available_width * (weights[0] + weights[1]) / total_width)
+                            
+                            # Устанавливаем позиции разделителей
+                            self.main_paned.sashpos(0, sash_pos1)
+                            self.main_paned.sashpos(1, sash_pos2)
+                    except Exception as e:
+                        self.log(f"Ошибка при обновлении пропорций основной панели: {e}")
+                
+                # Обновляем пропорции вертикальных панелей
+                if hasattr(self, 'msg_paned'):
+                    try:
+                        panes = self.msg_paned.panes()
+                        if len(panes) == 2:
+                            weights = self.initial_pane_weights.get('msg', [2, 1])
+                            total_height = sum(weights)
+                            
+                            available_height = current_height - 150  # Учитываем отступы и другие элементы
+                            sash_pos = int(available_height * weights[0] / total_height)
+                            
+                            # Устанавливаем позицию разделителя
+                            self.msg_paned.sashpos(0, sash_pos)
+                    except Exception as e:
+                        self.log(f"Ошибка при обновлении пропорций панели сообщений: {e}")
+                
+                # Обновляем пропорции нижней панели
+                if hasattr(self, 'bottom_paned'):
+                    try:
+                        panes = self.bottom_paned.panes()
+                        if len(panes) == 2:
+                            weights = self.initial_pane_weights.get('bottom', [1, 1])
+                            total_width = sum(weights)
+                            
+                            available_width = current_width - 20
+                            sash_pos = int(available_width * weights[0] / total_width)
+                            
+                            # Устанавливаем позицию разделителя
+                            self.bottom_paned.sashpos(0, sash_pos)
+                    except Exception as e:
+                        self.log(f"Ошибка при обновлении пропорций нижней панели: {e}")
+                
+                # Обновляем интерфейс
+                self.root.update_idletasks()
+                
     def setup_main_tab(self):
         """Настройка основной вкладки"""
         # Создаем основной PanedWindow для разделения интерфейса на части
@@ -392,18 +570,59 @@ class TelegramSummarizerGUI:
         style.configure('Search.TLabelframe', background='#e6f2ff')
         style.configure('Search.TLabelframe.Label', font=('Arial', 11, 'bold'), foreground='#0066cc', background='#e6f2ff')
         
-        self.search_frame = ttk.LabelFrame(self.main_frame, text="Расширенный поиск по нескольким чатам", style='Search.TLabelframe')
-        self.search_frame.pack(fill=tk.X, padx=5, pady=5, before=self.main_paned)
+        # Добавляем состояние свернутости в настройки
+        self.settings.setdefault('search_frame_collapsed', False)
+        
+        # Создаем основной контейнер
+        self.search_container = ttk.Frame(self.main_frame)
+        self.search_container.pack(fill=tk.X, padx=5, pady=5, before=self.main_paned)
+        
+        # Создаем заголовок с кнопкой сворачивания
+        self.search_header = ttk.Frame(self.search_container)
+        self.search_header.pack(fill=tk.X)
+        
+        # Иконка сворачивания/разворачивания
+        icon_text = "▼" if self.settings['search_frame_collapsed'] else "▲"
+        self.toggle_icon = ttk.Label(self.search_header, text=icon_text, font=('Arial', 11, 'bold'), foreground='#0066cc')
+        self.toggle_icon.pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Заголовок
+        self.search_title = ttk.Label(self.search_header, text="Расширенный поиск по нескольким чатам",
+                                     font=('Arial', 11, 'bold'), foreground='#0066cc')
+        self.search_title.pack(side=tk.LEFT, padx=5)
+        
+        # Привязываем обработчики клика
+        self.toggle_icon.bind("<Button-1>", self.toggle_search_frame)
+        self.search_title.bind("<Button-1>", self.toggle_search_frame)
+        self.search_header.bind("<Button-1>", self.toggle_search_frame)
+        
+        # Добавляем подсказку
+        self.create_tooltip(self.search_header, "Щелкните для сворачивания/разворачивания")
+        
+        # Создаем фрейм для содержимого
+        self.search_frame = ttk.LabelFrame(self.search_container, style='Search.TLabelframe')
+        self.search_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Создаем внутренний фрейм для содержимого
+        self.search_content_frame = ttk.Frame(self.search_frame)
+        
+        # Управление видимостью содержимого
+        if not self.settings['search_frame_collapsed']:
+            self.search_content_frame.pack(fill=tk.X, padx=5, pady=5)
+        else:
+            # Устанавливаем минимальную высоту для фрейма
+            self.search_frame.configure(height=10)
+            self.search_frame.pack_propagate(False)  # Запрещаем изменение размера
         
         # Добавляем информацию о выбранных диалогах в фрейм поиска
-        selection_frame = ttk.Frame(self.search_frame)
+        selection_frame = ttk.Frame(self.search_content_frame)
         selection_frame.pack(fill=tk.X, padx=5, pady=5)
         
         self.search_selection_label = ttk.Label(selection_frame, textvariable=self.selected_dialogs_var, font=('Arial', 10, 'bold'))
         self.search_selection_label.pack(side=tk.LEFT, padx=5)
         
         # Добавляем инструкции по выбору
-        instruction_frame = ttk.Frame(self.search_frame)
+        instruction_frame = ttk.Frame(self.search_content_frame)
         instruction_frame.pack(fill=tk.X, padx=5, pady=2)
         
         instruction_text = "Выберите несколько диалогов, удерживая Ctrl и кликая на диалоги в списке слева"
@@ -411,7 +630,7 @@ class TelegramSummarizerGUI:
         
         # Создаем контейнер для параметров поиска с отступами и рамкой
         style.configure('SearchParams.TFrame', background='#f0f8ff')
-        search_params_frame = ttk.Frame(self.search_frame, style='SearchParams.TFrame')
+        search_params_frame = ttk.Frame(self.search_content_frame, style='SearchParams.TFrame')
         search_params_frame.pack(fill=tk.X, padx=5, pady=5)
         
         # Разделяем параметры на левую и правую колонки для лучшей организации
@@ -426,19 +645,25 @@ class TelegramSummarizerGUI:
         self.text_search_var = tk.StringVar()
         text_entry = ttk.Entry(left_frame, textvariable=self.text_search_var, width=25)
         text_entry.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W+tk.E)
-        ttk.Label(left_frame, text="Слово или фраза в сообщении", font=('Arial', 8)).grid(row=0, column=2, padx=5, pady=2, sticky=tk.W)
+        text_help_label = ttk.Label(left_frame, text="Слово или фраза в сообщении", font=('Arial', 8))
+        text_help_label.grid(row=0, column=2, padx=5, pady=2, sticky=tk.W)
+        self.create_tooltip(text_help_label, "Введите текст для поиска в сообщениях")
         
         ttk.Label(left_frame, text="Отправитель:", font=('Arial', 9, 'bold')).grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
         self.sender_search_var = tk.StringVar()
         sender_entry = ttk.Entry(left_frame, textvariable=self.sender_search_var, width=25)
         sender_entry.grid(row=1, column=1, padx=5, pady=2, sticky=tk.W+tk.E)
-        ttk.Label(left_frame, text="Имя или часть имени отправителя", font=('Arial', 8)).grid(row=1, column=2, padx=5, pady=2, sticky=tk.W)
+        sender_help_label = ttk.Label(left_frame, text="Имя или часть имени отправителя", font=('Arial', 8))
+        sender_help_label.grid(row=1, column=2, padx=5, pady=2, sticky=tk.W)
+        self.create_tooltip(sender_help_label, "Введите имя отправителя или его часть")
         
         ttk.Label(left_frame, text="Дата:", font=('Arial', 9, 'bold')).grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
         self.date_search_var = tk.StringVar()
         date_entry = ttk.Entry(left_frame, textvariable=self.date_search_var, width=25)
         date_entry.grid(row=2, column=1, padx=5, pady=2, sticky=tk.W+tk.E)
-        ttk.Label(left_frame, text="Формат: ГГГГ-ММ-ДД", font=('Arial', 8)).grid(row=2, column=2, padx=5, pady=2, sticky=tk.W)
+        date_help_label = ttk.Label(left_frame, text="Формат: ГГГГ-ММ-ДД", font=('Arial', 8))
+        date_help_label.grid(row=2, column=2, padx=5, pady=2, sticky=tk.W)
+        self.create_tooltip(date_help_label, "Введите дату в формате ГГГГ-ММ-ДД для поиска сообщений за определенную дату")
         
         # Правая колонка: Статус ответа и кнопка поиска
         ttk.Label(right_frame, text="Статус ответа:", font=('Arial', 9, 'bold')).grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
@@ -470,7 +695,7 @@ class TelegramSummarizerGUI:
         # Кнопка поиска с улучшенным стилем
         style.configure('Search.TButton', font=('Arial', 10, 'bold'))
         self.search_btn = ttk.Button(
-            self.search_frame,
+            self.search_content_frame,
             text="Искать во всех выбранных чатах",
             command=self.search_all_chats,
             style='Search.TButton'
@@ -478,6 +703,35 @@ class TelegramSummarizerGUI:
         self.search_btn.pack(fill=tk.X, padx=20, pady=10)
         # По умолчанию кнопка поиска недоступна
         self.search_btn.state(['disabled'])
+        
+    def toggle_search_frame(self, event):
+        """Переключение состояния фрейма поиска (свернуть/развернуть)"""
+        # Изменяем состояние
+        self.settings['search_frame_collapsed'] = not self.settings['search_frame_collapsed']
+        
+        # Обновляем иконку
+        self.toggle_icon.config(text="▼" if self.settings['search_frame_collapsed'] else "▲")
+        
+        # Управляем видимостью только содержимого, сам фрейм остается видимым
+        if self.settings['search_frame_collapsed']:
+            # Скрываем содержимое
+            self.search_content_frame.pack_forget()
+            
+            # Устанавливаем минимальную высоту для фрейма
+            self.search_frame.configure(height=10)
+            self.search_frame.pack_propagate(False)  # Запрещаем изменение размера
+        else:
+            # Восстанавливаем нормальные размеры
+            self.search_frame.pack_propagate(True)  # Разрешаем изменение размера
+            
+            # Показываем содержимое
+            self.search_content_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Обновляем интерфейс
+        self.root.update_idletasks()
+        
+        # Сохраняем настройки
+        self.save_settings()
     
     def update_dialogs_selection_status(self):
         """Обновляет статус выбора диалогов для множественного поиска"""
@@ -622,12 +876,15 @@ class TelegramSummarizerGUI:
         ttk.Separator(self.settings_frame, orient='horizontal').grid(row=4, column=0, columnspan=2, sticky='ew', pady=10)
         
         # Раздел версии клиента
-        ttk.Label(self.settings_frame, text="Версия клиента:", font=('', 10, 'bold')).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=(10,5))
+        client_version_label = ttk.Label(self.settings_frame, text="Версия клиента:", font=('', 10, 'bold'))
+        client_version_label.grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=(10,5))
+        self.create_tooltip(client_version_label, "Настройки версии клиента Telegram для эмуляции")
         
         # System Version
         ttk.Label(self.settings_frame, text="Версия системы:").grid(row=6, column=0, sticky=tk.W)
         self.system_version_var = tk.StringVar(value=self.settings.get('system_version', 'Windows 10'))
         self.system_version_combo = ttk.Combobox(self.settings_frame, textvariable=self.system_version_var)
+        self.create_tooltip(self.system_version_combo, "Версия операционной системы для эмуляции")
         self.system_version_combo['values'] = self.settings.get('system_versions', ['Windows 10', 'Android 13.0', 'iOS 16.5', 'macOS 13.4'])
         self.system_version_combo.grid(row=6, column=1, sticky=(tk.W, tk.E), padx=5)
         
@@ -635,6 +892,7 @@ class TelegramSummarizerGUI:
         ttk.Label(self.settings_frame, text="Модель устройства:").grid(row=7, column=0, sticky=tk.W)
         self.device_model_var = tk.StringVar(value=self.settings.get('device_model', 'Desktop'))
         self.device_model_combo = ttk.Combobox(self.settings_frame, textvariable=self.device_model_var)
+        self.create_tooltip(self.device_model_combo, "Модель устройства для эмуляции")
         self.device_model_combo['values'] = self.settings.get('device_models', ['Desktop', 'Samsung Galaxy S23', 'iPhone 14 Pro', 'MacBook Pro'])
         self.device_model_combo.grid(row=7, column=1, sticky=(tk.W, tk.E), padx=5)
         
@@ -642,16 +900,19 @@ class TelegramSummarizerGUI:
         ttk.Label(self.settings_frame, text="Версия приложения:").grid(row=8, column=0, sticky=tk.W)
         self.app_version_var = tk.StringVar(value=self.settings.get('app_version', '4.8.1'))
         self.app_version_combo = ttk.Combobox(self.settings_frame, textvariable=self.app_version_var)
+        self.create_tooltip(self.app_version_combo, "Версия приложения Telegram для эмуляции")
         self.app_version_combo['values'] = self.settings.get('app_versions', ['4.8.1', '9.6.3', '9.7.0'])
         self.app_version_combo.grid(row=8, column=1, sticky=(tk.W, tk.E), padx=5)
         
         # Кнопка применения версии клиента
-        self.apply_version_btn = ttk.Button(self.settings_frame, text="Применить версию", 
+        self.apply_version_btn = ttk.Button(self.settings_frame, text="Применить версию",
                                           command=self.apply_client_version)
+        self.create_tooltip(self.apply_version_btn, "Применить выбранные настройки версии клиента")
         self.apply_version_btn.grid(row=9, column=0, columnspan=2, pady=10)
         
         # Кнопка сохранения настроек
         self.save_settings_btn = ttk.Button(self.settings_frame, text="Сохранить настройки", command=self.save_settings)
+        self.create_tooltip(self.save_settings_btn, "Сохранить все настройки приложения")
         self.save_settings_btn.grid(row=10, column=0, columnspan=2, sticky=tk.W, pady=5)
     
     def load_settings(self):
@@ -1519,6 +1780,11 @@ db_settings = {{
                 if 'geometry' in state:
                     self.root.geometry(state['geometry'])
                     self.log(f"Состояние окна загружено: {state}")
+                    
+                    # Загружаем пропорции панелей, если они сохранены
+                    if 'pane_weights' in state:
+                        self.initial_pane_weights = state['pane_weights']
+                        self.log(f"Загружены пропорции панелей: {self.initial_pane_weights}")
                 else:
                     self.log("Состояние окна не найдено, используются значения по умолчанию.")
                 self.root.update_idletasks()
@@ -1541,8 +1807,14 @@ db_settings = {{
             geometry = self.root.geometry()
             self.log(f"Текущая геометрия окна: {geometry}")
             
+            # Сохраняем текущие пропорции панелей
+            pane_weights = {}
+            if hasattr(self, 'initial_pane_weights'):
+                pane_weights = self.initial_pane_weights
+            
             settings['window_state'] = {
-                'geometry': geometry
+                'geometry': geometry,
+                'pane_weights': pane_weights
             }
             
             # Удаляем API ключ из настроек перед сохранением
