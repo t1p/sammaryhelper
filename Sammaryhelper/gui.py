@@ -108,6 +108,8 @@ class TelegramSummarizerGUI:
         self.app_dir = os.path.dirname(os.path.abspath(__file__))
         self.loop = asyncio.new_event_loop()
         self.running = True
+        self.loop_thread = None
+        self._ensure_loop_created()
         
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(fill='both', expand=True, padx=5, pady=5)
@@ -853,6 +855,38 @@ class TelegramSummarizerGUI:
         
         # Привязываем обработчик изменения конфига
         self.config_combo.bind('<<ComboboxSelected>>', self.on_config_change)
+    async def update_models_list(self):
+        """Обновление списка доступных моделей OpenAI"""
+        if not self._ensure_loop_active():
+            return
+        
+        try:
+            models = await self.ai_handler.get_available_models()
+            self.settings['available_models'] = models
+            self.model_combo['values'] = models
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось обновить модели: {str(e)}")
+
+def _update_models_handler(self):
+    """Обработчик кнопки обновления моделей с использованием asyncio"""
+    if not hasattr(self, 'loop') or not self.loop.is_running():
+        messagebox.showerror("Ошибка", "Event loop не активен")
+        return
+        
+    try:
+        asyncio.run_coroutine_threadsafe(
+            self.update_models_list(),
+            self.loop
+        )
+    except Exception as e:
+        messagebox.showerror("Ошибка", f"Ошибка при запуске обновления: {str(e)}")
+
+    def on_model_select(self, event):
+        """Обработчик выбора модели"""
+        selected_model = self.model_var.get()
+        if selected_model:
+            self.settings['openai_model'] = selected_model
+            print(f"Выбрана модель: {selected_model}")
 
     def setup_settings_tab(self):
         """Настройка вкладки настроек"""
@@ -862,6 +896,15 @@ class TelegramSummarizerGUI:
         self.model_combo = ttk.Combobox(self.settings_frame, textvariable=self.model_var)
         self.model_combo['values'] = self.settings['available_models']
         self.model_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5, pady=5)
+        self.model_combo.bind('<<ComboboxSelected>>', self.on_model_select)
+        
+        # Кнопка обновления списка моделей
+        self.update_models_btn = ttk.Button(
+            self.settings_frame,
+            text="Обновить список",
+            command=self._update_models_handler
+        )
+        self.update_models_btn.grid(row=0, column=2, padx=5, pady=5)
         
         # Системный промпт
         ttk.Label(self.settings_frame, text="Системный промпт:").grid(row=1, column=0, sticky=tk.W, pady=5)
@@ -948,12 +991,31 @@ class TelegramSummarizerGUI:
         except Exception as e:
             self.log(f"Ошибка при сохранении настроек: {e}")
 
+    def _ensure_loop_created(self):
+        """Проверяет, создан ли event loop, и создает его при необходимости"""
+        if not hasattr(self, 'loop') or self.loop is None or self.loop.is_closed():
+            self.loop = asyncio.new_event_loop()
+            self.log("Создан новый event loop")
+
+    def _ensure_loop_active(self):
+        """Проверяет, активен ли event loop"""
+        if not hasattr(self, 'loop') or self.loop is None or self.loop.is_closed():
+            raise RuntimeError("Event loop не активен")
+
     def run(self):
         """Запуск приложения"""
+        self._ensure_loop_created()
+        
         def run_loop():
             asyncio.set_event_loop(self.loop)
-            self.loop.run_forever()
-            
+            try:
+                self.loop.run_forever()
+            except Exception as e:
+                self.log(f"Ошибка в event loop: {e}")
+            finally:
+                if not self.loop.is_closed():
+                    self.loop.close()
+
         self.loop_thread = threading.Thread(target=run_loop, daemon=True)
         self.loop_thread.start()
         
@@ -961,7 +1023,7 @@ class TelegramSummarizerGUI:
             self.root.mainloop()
         finally:
             self.cleanup()
-            if hasattr(self, 'loop_thread'):
+            if hasattr(self, 'loop_thread') and self.loop_thread.is_alive():
                 self.loop_thread.join(timeout=5)
 
     def get_participants(self):
@@ -1114,26 +1176,39 @@ class TelegramSummarizerGUI:
             self.log_text.insert(tk.END, f"{message}\n")
             self.log_text.see(tk.END)
 
+    def _handle_async_result(self, future):
+        """Обрабатывает результат асинхронной операции"""
+        try:
+            future.result()
+        except Exception as e:
+            self.log(f"Ошибка в асинхронной задаче: {e}")
+            messagebox.showerror("Ошибка", f"Ошибка при выполнении задачи: {e}")
+
     def cleanup(self):
         """Очистка ресурсов при закрытии приложения"""
         self.running = False
         
         async def cleanup_async():
-            if hasattr(self, 'client_manager') and self.client_manager is not None:
-                if hasattr(self.client_manager, 'client') and self.client_manager.client is not None:
-                    if self.client_manager.client.is_connected():
-                        await self.client_manager.client.disconnect()
+            try:
+                if hasattr(self, 'client_manager') and self.client_manager is not None:
+                    if hasattr(self.client_manager, 'client') and self.client_manager.client is not None:
+                        if self.client_manager.client.is_connected():
+                            await self.client_manager.client.disconnect()
+            except Exception as e:
+                self.log(f"Ошибка при отключении клиента: {e}")
+            finally:
+                if not self.loop.is_closed():
+                    self.loop.call_soon_threadsafe(self.loop.stop)
         
         try:
-            future = asyncio.run_coroutine_threadsafe(cleanup_async(), self.loop)
-            future.result(timeout=5)
-            
-            self.loop.call_soon_threadsafe(self.loop.stop)
+            if hasattr(self, 'loop') and self.loop is not None and self.loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(cleanup_async(), self.loop)
+                future.result(timeout=5)
         except Exception as e:
-            if hasattr(self, 'log_text'):
-                self.log_text.insert(tk.END, f"Ошибка при очистке ресурсов: {e}\n")
-            else:
-                print(f"Ошибка при очистке ресурсов: {e}")
+            self.log(f"Ошибка при очистке ресурсов: {e}")
+        finally:
+            if hasattr(self, 'loop') and not self.loop.is_closed():
+                self.loop.close()
 
     def load_filtered_dialogs(self):
         """Загрузка и фильтрация диалогов"""
@@ -1432,7 +1507,13 @@ db_settings = {{
                 self.load_messages_btn.state(['!disabled'])
                 self.log("[СООБЩЕНИЯ] Загрузка сообщений завершена")
         
-        asyncio.run_coroutine_threadsafe(run(), self.loop)
+        try:
+            self._ensure_loop_active()
+            future = asyncio.run_coroutine_threadsafe(run(), self.loop)
+            future.add_done_callback(self._handle_async_result)
+        except RuntimeError as e:
+            self.log(f"Ошибка при запуске асинхронной задачи: {e}")
+            messagebox.showerror("Ошибка", f"Не удалось запустить задачу: {e}")
     
     async def load_topic_messages_async(self):
         """Асинхронная загрузка сообщений для выбранной темы"""
@@ -1522,7 +1603,6 @@ db_settings = {{
         if show_all:
             self.log(f"[ТЕМА_СООБЩЕНИЯ] Режим показа всех сообщений активен. Загружаем все сообщения вместо темы.")
             self.load_messages()
-            return
         
         # Получаем выбранную тему из дерева
         selected_items = self.topics_tree.selection()
@@ -1840,6 +1920,19 @@ db_settings = {{
         self.settings['max_messages'] = self.max_messages_var.get()
         
         # Сохраняем настройки
+        
+        # Корректно завершаем event loop
+        if hasattr(self, 'loop') and self.loop and not self.loop.is_closed():
+            try:
+                self.log("Завершение event loop")
+                self.loop.call_soon_threadsafe(self.loop.stop)
+                if hasattr(self, 'loop_thread') and self.loop_thread:
+                    self.loop_thread.join(timeout=1.0)
+                self.loop.close()
+            except Exception as e:
+                self.log(f"Ошибка при завершении loop: {str(e)}")
+        
+        self.root.destroy()
         self.save_settings()
         
         # Сохраняем состояние окна

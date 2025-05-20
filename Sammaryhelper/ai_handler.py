@@ -131,4 +131,92 @@ class AIChatManager:
             )
             return response.choices[0].message.content
         except Exception as e:
-            return f"Ошибка при анализе участников чата: {str(e)}" 
+            return f"Ошибка при анализе участников чата: {str(e)}"
+
+    async def get_available_models(self) -> List[Dict[str, Any]]:
+        """Получение списка доступных моделей OpenAI с их свойствами
+        
+        Returns:
+            List[Dict[str, Any]]: Список словарей с информацией о моделях,
+            где каждый словарь содержит:
+            - id: идентификатор модели
+            - created: дата создания
+            - owned_by: владелец модели
+            - capabilities: возможности модели
+        """
+        try:
+            # Инициализируем клиент OpenAI при необходимости
+            if self.openai_client is None:
+                self.openai_client = openai.AsyncOpenAI(api_key=self.settings.get('openai_api_key'))
+            
+            # Получаем список моделей
+            models = await self.openai_client.models.list()
+            
+            # Форматируем результат
+            return [
+                {
+                    "id": model.id,
+                    "created": model.created,
+                    "owned_by": model.owned_by,
+                    "capabilities": {
+                        "chat": "gpt" in model.id,
+                        "completion": "davinci" in model.id or "curie" in model.id,
+                        "embedding": "embedding" in model.id
+                    }
+                }
+                for model in models.data
+            ]
+            
+        except Exception as e:
+            print(f"Ошибка при получении списка моделей: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return []
+
+    async def select_model(self) -> str:
+        """Выбор модели из списка доступных
+        
+        Returns:
+            str: Идентификатор выбранной модели
+        """
+        try:
+            # Получаем список доступных моделей
+            models = await self.get_available_models()
+            if not models:
+                print("Нет доступных моделей")
+                return ""
+            
+            # Выводим список моделей с нумерацией
+            print("\nДоступные модели:")
+            for i, model in enumerate(models, 1):
+                print(f"{i}. {model['id']}")
+                print(f"   Создана: {model['created']}")
+                print(f"   Владелец: {model['owned_by']}")
+                print(f"   Возможности: {'Чат' if model['capabilities']['chat'] else ''} "
+                      f"{'Завершение текста' if model['capabilities']['completion'] else ''} "
+                      f"{'Векторизация' if model['capabilities']['embedding'] else ''}")
+                print()
+            
+            # Запрашиваем выбор пользователя
+            while True:
+                try:
+                    choice = input("Выберите номер модели (или 0 для отмены): ")
+                    if choice == "0":
+                        return ""
+                    
+                    choice_idx = int(choice) - 1
+                    if 0 <= choice_idx < len(models):
+                        selected_model = models[choice_idx]['id']
+                        self.settings['openai_model'] = selected_model
+                        print(f"Выбрана модель: {selected_model}")
+                        return selected_model
+                    else:
+                        print("Неверный номер. Попробуйте снова.")
+                except ValueError:
+                    print("Пожалуйста, введите число.")
+                
+        except Exception as e:
+            print(f"Ошибка при выборе модели: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return ""
