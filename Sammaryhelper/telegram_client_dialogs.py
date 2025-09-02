@@ -100,7 +100,11 @@ class TelegramClientDialogs(TelegramClientBase):
             
             # Получаем ID аккаунта
             me = await self.client.get_me()
-            account_id = str(me.phone) if me.phone else me.username
+            if me is None:
+                self.log("Ошибка: Не удалось получить информацию о текущем пользователе (me is None).")
+                account_id = "" # Или можно выбросить исключение, в зависимости от желаемого поведения
+            else:
+                account_id = str(me.phone) if me.phone else me.username
             self.log(f"ID аккаунта: {account_id}")
             
             # Получаем структуру папок

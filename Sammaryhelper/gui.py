@@ -62,8 +62,19 @@ class ToolTip:
         
         # Используем системные стили
         bg = 'SystemButtonFace'
-        fg = self.widget.cget('foreground') or 'SystemWindowText'
-        font = self.widget.cget('font') or ('Arial', '10', 'normal')
+        # Пытаемся получить цвет текста из виджета, если он поддерживает 'foreground'
+        try:
+            fg = self.widget.cget('foreground')
+        except tk.TclError:
+            # Если виджет не поддерживает 'foreground', используем цвет текста по умолчанию для SystemWindowText
+            fg = 'SystemWindowText'
+        
+        # Пытаемся получить шрифт из виджета, если он поддерживает 'font'
+        try:
+            font = self.widget.cget('font')
+        except tk.TclError:
+            # Если виджет не поддерживает 'font', используем шрифт по умолчанию
+            font = ('Arial', '10', 'normal')
         
         label = tk.Label(tw, text=self.text, justify=tk.LEFT,
                         background=bg, foreground=fg,
