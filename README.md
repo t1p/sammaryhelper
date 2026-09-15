@@ -84,5 +84,15 @@ python -m Sammaryhelper.main
   pip install asyncpg
   ```
 
+## MCP-сервер "справочник" по архиву Telegram
+
+В [`mcp_archive_server/`](mcp_archive_server/README.md) — отдельный
+MCP-сервер, который отдаёт агенту (read-only) уже закешированные
+Sammaryhelper в PostgreSQL чаты, группы и каналы. Идея: агент сначала
+проверяет этот архив (дёшево, без обращения к живому Telegram-аккаунту)
+и только потом, если нужно, делает точечный запрос через отдельный
+MCP-коннектор к живому Telegram. Подробности и настройка — в README
+этого модуля.
+
 ## Лицензия
 AGPL-3.0
