@@ -20,3 +20,4 @@ Sammaryhelper.egg-info/
 Sammaryhelper/sh_profile.json
 .roomodes
 .git/
+.venv-archive-mcp/
