@@ -20,3 +20,7 @@ Sammaryhelper.egg-info/
 Sammaryhelper/sh_profile.json
 .roomodes
 .git/
+
+# fastgpt_exporter: локальный стейт с id датасета/коллекции конкретного окружения
+fastgpt_exporter/*state*.json
+*.fastgpt_exporter_state.json
