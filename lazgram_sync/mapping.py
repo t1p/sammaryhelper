@@ -74,3 +74,77 @@ def build_message(message: dict[str, Any]) -> dict[str, Any]:
         "has_attachment": message.get("hasAttachment", False),
         "source": "lazgram",
     }
+
+
+# ===== Маппинг для схемы tg_map =====
+
+
+def build_tg_map_chat(
+    chat: dict[str, Any],
+    account_key: str = "igor",
+) -> dict[str, Any]:
+    """LazGram Chat -> строка для tg_map.chat."""
+    return {
+        "account_key": account_key,
+        "chat_id": chat["id"],
+        "chat_type": chat.get("type", ""),
+        "username": chat.get("username"),
+        "title_live": chat.get("title"),
+        "source": "lazgram",
+        "is_live": True,  # Свежие данные от LazGram
+    }
+
+
+def build_tg_map_chat_alias(
+    chat: dict[str, Any],
+    account_key: str = "igor",
+) -> dict[str, Any]:
+    """LazGram Chat -> строка для tg_map.chat_alias (если есть title/username)."""
+    aliases = []
+
+    # Добавляем title как алиас
+    if chat.get("title"):
+        aliases.append(
+            {
+                "account_key": account_key,
+                "chat_id": chat["id"],
+                "alias": chat["title"],
+                "source": "lazgram",
+            }
+        )
+
+    # Добавляем username как алиас (если есть и не совпадает с title)
+    if chat.get("username") and chat.get("username") != chat.get("title"):
+        aliases.append(
+            {
+                "account_key": account_key,
+                "chat_id": chat["id"],
+                "alias": chat["username"],
+                "source": "lazgram",
+            }
+        )
+
+    return aliases
+
+
+def build_tg_map_message(
+    message: dict[str, Any],
+    chat_id: int,
+    account_key: str = "igor",
+) -> dict[str, Any]:
+    """LazGram Message -> строка для tg_map.message_cache."""
+    date = message.get("date")
+    if isinstance(date, (int, float)):
+        date = datetime.datetime.utcfromtimestamp(date)
+    elif not isinstance(date, datetime.datetime):
+        date = datetime.datetime.now(datetime.timezone.utc)
+
+    return {
+        "account_key": account_key,
+        "chat_id": chat_id,
+        "message_id": message["id"],
+        "sender_id": message.get("senderId"),
+        "text": message.get("text", ""),
+        "sent_at": date if date.tzinfo else date.replace(tzinfo=datetime.timezone.utc),
+        "raw_json": message,  # Сохраняем весь объект для справки
+    }

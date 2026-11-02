@@ -93,6 +93,26 @@ def normalize_chat_type(chat_type: Optional[str]) -> Optional[str]:
     return _TYPE_ALIASES.get(chat_type.strip().lower(), chat_type)
 
 
+def parse_lazgram_cache_enabled(value: Optional[str]) -> bool:
+    """Разбирает переменную окружения LAZGRAM_CACHE_ENABLED в булево значение.
+    Возможные значения: 'true', '1', 'yes' -> True
+    'false', '0', 'no' -> False
+    Неизвестные значения -> False (безопасное поведение — кэш выключен)."""
+    if not value:
+        return True  # default: cache enabled
+    value_lower = str(value).strip().lower()
+    if value_lower in ("true", "1", "yes"):
+        return True
+    if value_lower in ("false", "0", "no"):
+        return False
+    # Неизвестное значение — логируем и выключаем кэш
+    logger.warning(
+        f"Неизвестное значение LAZGRAM_CACHE_ENABLED={value!r}, ожидается "
+        "'true'/'false'/'1'/'0'/'yes'/'no'. Устанавливаю в False (кэш выключен)."
+    )
+    return False
+
+
 @dataclass
 class ArchiveConfig:
     host: str = "localhost"
@@ -101,6 +121,7 @@ class ArchiveConfig:
     user: str = "tg_archive_ro"
     password: str = ""
     accounts: dict[str, str] = None  # type: ignore[assignment]
+    lazgram_cache_enabled: bool = True
 
     @classmethod
     def load(cls) -> "ArchiveConfig":
@@ -148,6 +169,10 @@ class ArchiveConfig:
                 f"или положите его в {DEFAULT_DB_ENV_FILE}, или в конфиг Sammaryhelper."
             )
 
+        lazgram_cache_enabled = parse_lazgram_cache_enabled(
+            os.environ.get("LAZGRAM_CACHE_ENABLED")
+        )
+
         return cls(
             host=str(pick("TG_ARCHIVE_DB_HOST", "host", defaults.host)),
             port=int(pick("TG_ARCHIVE_DB_PORT", "port", defaults.port)),
@@ -155,6 +180,7 @@ class ArchiveConfig:
             user=str(pick("TG_ARCHIVE_DB_USER", "user", defaults.user)),
             password=password,
             accounts=parse_accounts(os.environ.get("TG_ARCHIVE_ACCOUNTS")),
+            lazgram_cache_enabled=lazgram_cache_enabled,
         )
 
 
@@ -314,12 +340,57 @@ class ArchiveDB:
             row = await conn.fetchrow(sql, *params)
         return dict(row) if row else {"messages_count": 0, "oldest": None, "newest": None}
 
+    async def get_cached_messages(
+        self,
+        chat_id: int,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Получить закешированные сообщения из tg_map.message_cache.
+
+        Возвращает {"has_cached": bool, "messages": [...], "cached_at": ...}
+        или пустой список, если кэша нет."""
+        if not self.config.lazgram_cache_enabled:
+            return {"has_cached": False, "messages": []}
+
+        sql = """
+            SELECT
+                message_id, chat_id, sender_id, text, sent_at, raw_json, cached_at
+            FROM tg_map.message_cache
+            WHERE chat_id = $1
+            ORDER BY sent_at DESC
+            LIMIT $2
+        """
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(sql, chat_id, limit)
+
+        if rows:
+            # Берём cached_at из первого сообщения (все из одного батча)
+            cached_at = rows[0]["cached_at"] if rows else None
+            return {
+                "has_cached": True,
+                "messages": [dict(r) for r in rows],
+                "cached_at": cached_at,
+            }
+        return {"has_cached": False, "messages": []}
+
     async def get_recent_messages(
         self,
         dialog_id: int,
         account_id: Optional[str] = None,
         limit: int = 20,
     ) -> dict[str, Any]:
+        # Попытка получить из кэша LazGram (если включен)
+        if self.config.lazgram_cache_enabled:
+            cached_result = await self.get_cached_messages(dialog_id, limit)
+            if cached_result["has_cached"]:
+                # Есть в кэше LazGram — возвращаем сразу
+                return {
+                    "coverage": "cached",
+                    "messages": cached_result["messages"],
+                    "cached_at": cached_result.get("cached_at"),
+                }
+
+        # Кэш отключен или в кэше нет данных — берём из архива (public.messages)
         conditions = ["dialog_id = $1"]
         params: list[Any] = [dialog_id]
         if account_id:
@@ -337,7 +408,11 @@ class ArchiveDB:
             rows = await conn.fetch(sql, *params)
 
         if rows:
-            return {"coverage": "partial", "messages": [dict(r) for r in rows]}
+            result = {"coverage": "archive", "messages": [dict(r) for r in rows]}
+            # Если кэш включен, но данные из архива, отправляем подсказку
+            if self.config.lazgram_cache_enabled:
+                result["hint"] = "не закэшировано; данные из архива, может быть неактуально"
+            return result
 
         # Пустой список неоднозначен: чат мог просто не иметь сообщений в
         # выборке, либо для него вообще не выкачивались сообщения (130 из
@@ -349,7 +424,7 @@ class ArchiveDB:
                 *([dialog_id, account_id] if account_id else [dialog_id]),
             )
         if has_any:
-            return {"coverage": "partial", "messages": []}
+            return {"coverage": "archive", "messages": []}
         return {
             "coverage": "none",
             "messages": [],

@@ -1,12 +1,40 @@
-"""Конфигурация синка: как запускать lazgram-mcp.mjs, и что синхронизировать."""
+"""Конфигурация синка: как запускать lazgram-mcp.mjs, и что синхронизировать.
+
+Управление кэшем:
+- LAZGRAM_CACHE_ENABLED (true|false|1|0): включить/выключить запись в tg_map.message_cache.
+  По умолчанию true. Если false, lazgram_sync пишет только в public.dialogs/messages (старое поведение).
+"""
 
 from __future__ import annotations
 
 import datetime
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
+
+
+def parse_lazgram_cache_enabled(value: Optional[str]) -> bool:
+    """Разбирает переменную окружения LAZGRAM_CACHE_ENABLED в булево значение.
+    Возможные значения: 'true', '1', 'yes' -> True
+    'false', '0', 'no' -> False
+    Неизвестные значения -> False (безопасное поведение — кэш выключен)."""
+    if not value:
+        return True  # default: cache enabled
+    value_lower = str(value).strip().lower()
+    if value_lower in ("true", "1", "yes"):
+        return True
+    if value_lower in ("false", "0", "no"):
+        return False
+    # Неизвестное значение — логируем и выключаем кэш
+    logger.warning(
+        f"Неизвестное значение LAZGRAM_CACHE_ENABLED={value!r}, ожидается "
+        "'true'/'false'/'1'/'0'/'yes'/'no'. Устанавливаю в False (кэш выключен)."
+    )
+    return False
 
 
 @dataclass
@@ -67,6 +95,7 @@ class SyncJobConfig:
     since: Optional[datetime.datetime]
     chats: list[ChatTarget] = field(default_factory=list)
     max_pages: int = 200
+    cache_enabled: bool = True  # Читается из LAZGRAM_CACHE_ENABLED
 
     @classmethod
     def load_file(cls, path: str) -> "SyncJobConfig":
@@ -97,11 +126,15 @@ class SyncJobConfig:
         if not chats:
             raise ValueError("В конфиге синка список 'chats' пуст — синхронизировать нечего.")
 
+        # Читаем флаг кэша из окружения
+        cache_enabled = parse_lazgram_cache_enabled(os.environ.get("LAZGRAM_CACHE_ENABLED"))
+
         return cls(
             account_id=str(account_id),
             since=default_since,
             chats=chats,
             max_pages=int(raw.get("max_pages", 200)),
+            cache_enabled=cache_enabled,
         )
 
 

@@ -21,7 +21,14 @@ from Sammaryhelper.db_handler import DatabaseHandler
 
 from .config import ChatTarget, LazgramConfig, SyncJobConfig
 from .lazgram_client import LazgramClient
-from .mapping import build_dialog, build_message, build_placeholder_dialog
+from .mapping import (
+    build_dialog,
+    build_message,
+    build_placeholder_dialog,
+    build_tg_map_chat,
+    build_tg_map_chat_alias,
+    build_tg_map_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +62,72 @@ def _to_epoch(dt: Optional[datetime.datetime]) -> Optional[float]:
     if dt.tzinfo is not None:
         return dt.timestamp()
     return dt.replace(tzinfo=datetime.timezone.utc).timestamp()
+
+
+async def _write_to_tg_map(
+    connection_pool: Any,
+    account_key: str,
+    chat: dict[str, Any],
+    messages: list[dict[str, Any]],
+    chat_id: int,
+) -> None:
+    """Запись чата и сообщений в схему tg_map (message_cache)."""
+    async with connection_pool.acquire() as conn:
+        # Вставляем чат в tg_map.chat
+        chat_row = build_tg_map_chat(chat, account_key)
+        await conn.execute(
+            """
+            INSERT INTO tg_map.chat (account_key, chat_id, chat_type, username, title_live, source, is_live)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (account_key, chat_id) DO UPDATE
+            SET title_live = EXCLUDED.title_live,
+                is_live = EXCLUDED.is_live
+            """,
+            chat_row["account_key"],
+            chat_row["chat_id"],
+            chat_row["chat_type"],
+            chat_row["username"],
+            chat_row["title_live"],
+            chat_row["source"],
+            chat_row["is_live"],
+        )
+
+        # Вставляем алиасы в tg_map.chat_alias
+        aliases = build_tg_map_chat_alias(chat, account_key)
+        for alias in aliases:
+            await conn.execute(
+                """
+                INSERT INTO tg_map.chat_alias (account_key, chat_id, alias, source)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (account_key, chat_id, alias) DO NOTHING
+                """,
+                alias["account_key"],
+                alias["chat_id"],
+                alias["alias"],
+                alias["source"],
+            )
+
+        # Вставляем сообщения в tg_map.message_cache
+        for message in messages:
+            msg_row = build_tg_map_message(message, chat_id, account_key)
+            await conn.execute(
+                """
+                INSERT INTO tg_map.message_cache
+                (account_key, chat_id, message_id, sender_id, text, sent_at, raw_json, cached_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+                ON CONFLICT (chat_id, message_id) DO UPDATE
+                SET text = EXCLUDED.text,
+                    sender_id = EXCLUDED.sender_id,
+                    raw_json = EXCLUDED.raw_json
+                """,
+                msg_row["account_key"],
+                msg_row["chat_id"],
+                msg_row["message_id"],
+                msg_row["sender_id"],
+                msg_row["text"],
+                msg_row["sent_at"],
+                msg_row["raw_json"],
+            )
 
 
 async def _fetch_since(
@@ -108,6 +181,7 @@ async def sync_chat(
     existing_folders: dict[int, Any],
     max_pages: int,
     dry_run: bool,
+    cache_enabled: bool = True,
 ) -> ChatSyncResult:
     result = ChatSyncResult(chat_id=target.chat_id, label=target.label())
     try:
@@ -129,10 +203,21 @@ async def sync_chat(
             dialog = build_placeholder_dialog(chat_id, existing_folders.get(chat_id))
 
         if not dry_run:
+            # Всегда пишем в public.dialogs/messages (для совместимости)
             await db.cache_dialogs([dialog], account_id)
             if messages:
                 mapped = [build_message(m) for m in messages]
                 await db.cache_messages(mapped, chat_id, account_id)
+
+            # Если кэш включен, дополнительно пишем в tg_map
+            if cache_enabled and chat_meta:
+                await _write_to_tg_map(
+                    db.connection_pool,
+                    "igor",  # account_key (жёстко для MVP)
+                    chat_meta,
+                    messages,
+                    chat_id,
+                )
 
         return result
     except Exception as e:  # noqa: BLE001 — один упавший чат не должен рушить весь прогон
@@ -152,6 +237,15 @@ async def run_sync(
     lazgram_config.validate()
 
     summary = SyncSummary(account_id=job.account_id, dry_run=dry_run)
+
+    # Логируем статус кэширования
+    if not job.cache_enabled:
+        logger.warning(
+            "LAZGRAM_CACHE_ENABLED=false: синк работает в режиме совместимости, "
+            "пишет только в public.dialogs/messages. tg_map.message_cache не заполняется."
+        )
+    else:
+        logger.info("LAZGRAM_CACHE_ENABLED=true: кэшируем сообщения в tg_map.message_cache")
 
     db = DatabaseHandler()
     if db_config is None:
@@ -196,8 +290,23 @@ async def run_sync(
                     existing_folders,
                     job.max_pages,
                     dry_run,
+                    cache_enabled=job.cache_enabled,
                 )
                 summary.results.append(result)
+
+        # Записываем итоги синка в tg_map.sync_run (если кэш включен)
+        if job.cache_enabled and not dry_run:
+            total_written = sum(r.messages_fetched for r in summary.results if r.error is None)
+            total_seen = sum(r.messages_fetched for r in summary.results)
+            await db.connection_pool.execute(
+                """
+                INSERT INTO tg_map.sync_run
+                (source, started_at, finished_at, rows_seen, rows_written, status)
+                VALUES ('lazgram_sync', now() - interval '1 second', now(), $1, $2, 'success')
+                """,
+                total_seen,
+                total_written,
+            )
 
         return summary
     finally:
