@@ -266,7 +266,7 @@ async def test_try_lazgram_fallback_success(monkeypatch):
     mock_config = MagicMock()
     mock_config.validate = MagicMock()
 
-    def mock_load():
+    def mock_load(cli_overrides=None):
         return mock_config
 
     monkeypatch.setattr("mcp_archive_server.db.LazgramConfig.load", mock_load)
@@ -307,7 +307,7 @@ async def test_try_lazgram_fallback_unavailable(monkeypatch):
     mock_config = MagicMock()
     mock_config.validate = MagicMock()
 
-    def mock_load():
+    def mock_load(cli_overrides=None):
         return mock_config
 
     monkeypatch.setattr("mcp_archive_server.db.LazgramConfig.load", mock_load)
@@ -342,7 +342,7 @@ async def test_try_lazgram_fallback_empty_response(monkeypatch):
     mock_config = MagicMock()
     mock_config.validate = MagicMock()
 
-    def mock_load():
+    def mock_load(cli_overrides=None):
         return mock_config
 
     monkeypatch.setattr("mcp_archive_server.db.LazgramConfig.load", mock_load)
@@ -374,7 +374,7 @@ async def test_try_lazgram_fallback_timeout(monkeypatch):
 
     mock_config = MagicMock()
     mock_config.validate = MagicMock()
-    monkeypatch.setattr("mcp_archive_server.db.LazgramConfig.load", lambda: mock_config)
+    monkeypatch.setattr("mcp_archive_server.db.LazgramConfig.load", lambda cli_overrides=None: mock_config)
     monkeypatch.setenv("LAZGRAM_SYNC_ACCOUNT", "test_account")
     monkeypatch.setenv("LAZGRAM_FALLBACK_TIMEOUT_S", "0.05")
 
@@ -414,3 +414,34 @@ async def test_write_to_cache_on_conflict_updates_existing_row():
     sql = mock_conn.execute.call_args[0][0]
     assert "ON CONFLICT (account_key, chat_id, message_id) DO UPDATE" in sql
     assert "SET text = EXCLUDED.text" in sql
+
+
+@pytest.mark.asyncio
+async def test_try_lazgram_fallback_uses_profile_not_cache_key(monkeypatch):
+    """Регресс: LazGram-профиль (сокет lazgram/<profile>.sock, по умолчанию prod)
+    не должен браться из LAZGRAM_SYNC_ACCOUNT — это ключ строк кэша (igor)."""
+    config = ArchiveConfig(lazgram_cache_enabled=True)
+    db = ArchiveDB(config=config)
+
+    seen = {}
+
+    def spy_load(cli_overrides=None):
+        seen["overrides"] = cli_overrides
+        m = MagicMock()
+        m.validate = MagicMock()
+        return m
+
+    async def fake_fetch(lazgram_config, chat_id, limit):
+        return {"messages": []}
+
+    monkeypatch.setattr("mcp_archive_server.db.LazgramConfig.load", spy_load)
+    monkeypatch.setattr(db, "_fetch_lazgram_history", fake_fetch)
+    monkeypatch.setenv("LAZGRAM_SYNC_ACCOUNT", "igor")
+    monkeypatch.delenv("LAZGRAM_PROFILE", raising=False)
+
+    await db._try_lazgram_fallback(chat_id=100, limit=3)
+    assert seen["overrides"] == {"account": "prod"}
+
+    monkeypatch.setenv("LAZGRAM_PROFILE", "test")
+    await db._try_lazgram_fallback(chat_id=100, limit=3)
+    assert seen["overrides"] == {"account": "test"}

@@ -551,8 +551,14 @@ class ArchiveDB:
         иначе None (попадём на обработку "нет данных").
         """
         try:
-            # Загружаем конфиг LazGram и получаем account_key из окружения
-            lazgram_config = LazgramConfig.load()
+            # Два разных понятия, не смешивать:
+            # - профиль LazGram (сокет lazgram/<profile>.sock) — живой аккаунт,
+            #   по умолчанию "prod" (LAZGRAM_PROFILE);
+            # - account_key — ключ строк в tg_map.message_cache, из
+            #   LAZGRAM_SYNC_ACCOUNT (default "igor"), как в batch-синке.
+            lazgram_config = LazgramConfig.load(
+                cli_overrides={"account": os.environ.get("LAZGRAM_PROFILE", "prod")}
+            )
             lazgram_config.validate()
             account_key = os.environ.get("LAZGRAM_SYNC_ACCOUNT", "igor")
 
