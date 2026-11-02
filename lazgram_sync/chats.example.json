@@ -1,0 +1,10 @@
+{
+  "account_id": "+79990001122",
+  "since": "2026-09-01T00:00:00",
+  "max_pages": 200,
+  "chats": [
+    { "chat_id": -1001234567890 },
+    { "username": "some_channel" },
+    { "chat_id": 123456789, "since": "2026-09-10T00:00:00" }
+  ]
+}

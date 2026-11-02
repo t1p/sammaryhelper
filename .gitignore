@@ -1,6 +1,7 @@
 # Виртуальное окружение
 venv/
 .venv/
+.venv-archive-mcp/
 # Кэш Python
 __pycache__/
 *.pyc
@@ -12,7 +13,7 @@ logs/
 
 # Настройки среды
 .env
-# 
+#
 Sammaryhelper/configs/
 Sammaryhelper/sessions/
 .vscode/
@@ -20,4 +21,7 @@ Sammaryhelper.egg-info/
 Sammaryhelper/sh_profile.json
 .roomodes
 .git/
-.venv-archive-mcp/
+
+# fastgpt_exporter: локальный стейт с id датасета/коллекции конкретного окружения
+fastgpt_exporter/*state*.json
+*.fastgpt_exporter_state.json

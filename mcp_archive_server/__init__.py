@@ -8,6 +8,16 @@
 отдельный MCP-коннектор (например, тот, что работает поверх MTProto).
 """
 
-from .server import mcp
-
+# Ленивый импорт: `mcp_archive_server.db` (ArchiveConfig/ArchiveDB) должен
+# быть импортируем сам по себе, без установленного SDK `mcp` — им пользуются
+# и другие независимые инструменты (например, fastgpt_exporter), которым
+# сам MCP-сервер не нужен.
 __all__ = ["mcp"]
+
+
+def __getattr__(name):
+    if name == "mcp":
+        from .server import mcp as _mcp
+
+        return _mcp
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
