@@ -16,6 +16,9 @@ from typing import Any, Optional
 
 import asyncpg
 
+from lazgram_sync.config import LazgramConfig
+from lazgram_sync.lazgram_client import LazgramClient, LazgramError
+from lazgram_sync.mapping import build_tg_map_message
 from utils.cache_flags import parse_lazgram_cache_enabled
 
 DEFAULT_DB_ENV_FILE = Path.home() / ".config" / "tg-archive" / "db.env"
@@ -361,18 +364,19 @@ class ArchiveDB:
         account_id: Optional[str] = None,
         limit: int = 20,
     ) -> dict[str, Any]:
-        # Попытка получить из кэша LazGram (если включен)
+        # LEVEL 1: Попытка получить из кэша LazGram (если включен)
         if self.config.lazgram_cache_enabled:
             cached_result = await self.get_cached_messages(dialog_id, limit)
             if cached_result["has_cached"]:
                 # Есть в кэше LazGram — возвращаем сразу
                 return {
                     "coverage": "cached",
+                    "source": "cache",
                     "messages": cached_result["messages"],
                     "cached_at": cached_result.get("cached_at"),
                 }
 
-        # Кэш отключен или в кэше нет данных — берём из архива (public.messages)
+        # LEVEL 2: Кэш отключен или в кэше нет данных — берём из архива (public.messages)
         conditions = ["dialog_id = $1"]
         params: list[Any] = [dialog_id]
         if account_id:
@@ -390,11 +394,21 @@ class ArchiveDB:
             rows = await conn.fetch(sql, *params)
 
         if rows:
-            result = {"coverage": "archive", "messages": [dict(r) for r in rows]}
+            result = {
+                "coverage": "archive",
+                "source": "archive",
+                "messages": [dict(r) for r in rows]
+            }
             # Если кэш включен, но данные из архива, отправляем подсказку
             if self.config.lazgram_cache_enabled:
                 result["hint"] = "не закэшировано; данные из архива, может быть неактуально"
             return result
+
+        # LEVEL 3: Пустой архив и кэш включен — пробуем LazGram
+        if self.config.lazgram_cache_enabled:
+            lazgram_result = await self._try_lazgram_fallback(dialog_id, limit)
+            if lazgram_result is not None:
+                return lazgram_result
 
         # Пустой список неоднозначен: чат мог просто не иметь сообщений в
         # выборке, либо для него вообще не выкачивались сообщения (130 из
@@ -406,9 +420,10 @@ class ArchiveDB:
                 *([dialog_id, account_id] if account_id else [dialog_id]),
             )
         if has_any:
-            return {"coverage": "archive", "messages": []}
+            return {"coverage": "archive", "source": "archive", "messages": []}
         return {
             "coverage": "none",
+            "source": "lazgram_unavailable",
             "messages": [],
             "hint": "чат есть в архиве, но его сообщения не выкачивались; бери историю через lazgram_history",
         }
@@ -522,6 +537,153 @@ class ArchiveDB:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(sql, *params)
         return [dict(r) for r in rows]
+
+    async def _try_lazgram_fallback(
+        self,
+        chat_id: int,
+        limit: int = 20,
+    ) -> Optional[dict[str, Any]]:
+        """LEVEL 3: Попробовать получить сообщения из LazGram и закешировать их.
+
+        Возвращает полный результат (coverage, source, messages) если успешно,
+        иначе None (попадём на обработку "нет данных").
+        """
+        try:
+            # Загружаем конфиг LazGram и получаем account_key из окружения
+            lazgram_config = LazgramConfig.load()
+            lazgram_config.validate()
+            account_key = os.environ.get("LAZGRAM_SYNC_ACCOUNT", "igor")
+
+            # Вызываем LazGram для получения истории
+            async with LazgramClient(lazgram_config) as client:
+                history_data = await client.history(chat_id=chat_id, limit=limit)
+                messages = history_data.get("messages", [])
+
+                if not messages:
+                    # LazGram вернул пусто, но это не ошибка
+                    return {
+                        "coverage": "none",
+                        "source": "lazgram_fallback",
+                        "messages": [],
+                        "hint": "LazGram вернул пустую историю для этого чата",
+                    }
+
+                # Преобразуем сообщения в формат tg_map.message_cache и пишем в БД
+                mapped_messages = [
+                    build_tg_map_message(msg, chat_id, account_key)
+                    for msg in messages
+                ]
+
+                # Пишем в кэш асинхронно, не блокируя ответ (best-effort)
+                try:
+                    await self._write_to_cache(mapped_messages)
+                except Exception as e:
+                    logger.warning(
+                        f"Не удалось записать сообщения в кэш для chat_id={chat_id}: {e}. "
+                        "Всё равно возвращаю результат LazGram."
+                    )
+
+                # Форматируем ответ, приводя к формату public.messages
+                response_messages = [
+                    {
+                        "id": msg["message_id"],
+                        "sender_id": msg["sender_id"],
+                        "sender_name": str(msg["sender_id"]),
+                        "text": msg["text"],
+                        "date": msg["sent_at"],
+                    }
+                    for msg in mapped_messages
+                ]
+
+                return {
+                    "coverage": "cached",  # успешно добавлено в кэш
+                    "source": "lazgram_fallback",
+                    "messages": response_messages,
+                    "hint": "данные получены от LazGram и добавлены в кэш",
+                }
+
+        except LazgramError as e:
+            # LazGram недоступен или ошибка — логируем и возвращаем None
+            logger.warning(f"LazGram fallback failed for chat_id={chat_id}: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"Unexpected error in LazGram fallback for chat_id={chat_id}: {e}")
+            return None
+
+    async def _write_to_cache(self, messages: list[dict[str, Any]]) -> None:
+        """Пишет сообщения в tg_map.message_cache. Используется отдельное соединение (не пул).
+
+        Параметры подготовлены функцией build_tg_map_message и готовы к прямой вставке.
+        """
+        if not messages:
+            return
+
+        # Создаём отдельное соединение для записи (не из пула)
+        conn = None
+        try:
+            conn = await asyncpg.connect(
+                host=self.config.host,
+                port=self.config.port,
+                database=self.config.database,
+                user="tg_map_rw",  # Роль с правами на запись
+                password=self._get_write_password(),
+                timeout=30,
+            )
+
+            # Вставляем с ON CONFLICT для идемпотентности
+            # (в случае, если запись уже существует)
+            insert_sql = """
+                INSERT INTO tg_map.message_cache
+                    (account_key, chat_id, message_id, sender_id, text, sent_at, raw_json)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (account_key, chat_id, message_id) DO NOTHING
+            """
+
+            for msg in messages:
+                await conn.execute(
+                    insert_sql,
+                    msg["account_key"],
+                    msg["chat_id"],
+                    msg["message_id"],
+                    msg["sender_id"],
+                    msg["text"],
+                    msg["sent_at"],
+                    msg["raw_json"],
+                )
+
+            logger.info(f"Написано {len(messages)} сообщений в tg_map.message_cache")
+
+        finally:
+            if conn is not None:
+                await conn.close()
+
+    def _get_write_password(self) -> str:
+        """Получает пароль для роли tg_map_rw из ~/.pgpass или окружения."""
+        # Сначала проверяем переменную окружения
+        if "TG_MAP_RW_PASSWORD" in os.environ:
+            return os.environ["TG_MAP_RW_PASSWORD"]
+
+        # Затем ~/.pgpass (формат: 127.0.0.1:5432:telegram_summarizer:tg_map_rw:PASSWORD)
+        pgpass = Path.home() / ".pgpass"
+        if pgpass.exists():
+            try:
+                for line in pgpass.read_text().splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    parts = line.split(":")
+                    if len(parts) == 5:
+                        host, port, db, user, password = parts
+                        if (host == self.config.host and
+                            int(port) == self.config.port and
+                            db == self.config.database and
+                            user == "tg_map_rw"):
+                            return password
+            except Exception as e:
+                logger.warning(f"Ошибка при чтении ~/.pgpass: {e}")
+
+        # По умолчанию пустой пароль (pg_hba trust на localhost)
+        return ""
 
     async def get_stats(self) -> dict[str, Any]:
         async with self.pool.acquire() as conn:
