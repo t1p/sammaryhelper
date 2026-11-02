@@ -16,6 +16,8 @@ from typing import Any, Optional
 
 import asyncpg
 
+from utils.cache_flags import parse_lazgram_cache_enabled
+
 DEFAULT_DB_ENV_FILE = Path.home() / ".config" / "tg-archive" / "db.env"
 
 logger = logging.getLogger(__name__)
@@ -91,26 +93,6 @@ def normalize_chat_type(chat_type: Optional[str]) -> Optional[str]:
     if not chat_type:
         return None
     return _TYPE_ALIASES.get(chat_type.strip().lower(), chat_type)
-
-
-def parse_lazgram_cache_enabled(value: Optional[str]) -> bool:
-    """Разбирает переменную окружения LAZGRAM_CACHE_ENABLED в булево значение.
-    Возможные значения: 'true', '1', 'yes' -> True
-    'false', '0', 'no' -> False
-    Неизвестные значения -> False (безопасное поведение — кэш выключен)."""
-    if not value:
-        return True  # default: cache enabled
-    value_lower = str(value).strip().lower()
-    if value_lower in ("true", "1", "yes"):
-        return True
-    if value_lower in ("false", "0", "no"):
-        return False
-    # Неизвестное значение — логируем и выключаем кэш
-    logger.warning(
-        f"Неизвестное значение LAZGRAM_CACHE_ENABLED={value!r}, ожидается "
-        "'true'/'false'/'1'/'0'/'yes'/'no'. Устанавливаю в False (кэш выключен)."
-    )
-    return False
 
 
 @dataclass

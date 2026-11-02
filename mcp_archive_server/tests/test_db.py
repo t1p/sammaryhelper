@@ -1,8 +1,13 @@
 """Tests for mcp_archive_server/db.py"""
 
+import asyncio
+import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
-from mcp_archive_server.db import ArchiveConfig, parse_lazgram_cache_enabled
+from mcp_archive_server.db import ArchiveConfig, ArchiveDB
+from utils.cache_flags import parse_lazgram_cache_enabled
 
 
 def test_parse_lazgram_cache_enabled_true_variants():
@@ -40,3 +45,126 @@ def test_archive_config_from_bool():
 
     config = ArchiveConfig(lazgram_cache_enabled=True)
     assert config.lazgram_cache_enabled is True
+
+
+# ===== Тесты cache-hit path (с mock asyncpg) =====
+
+
+@pytest.mark.asyncio
+async def test_get_cached_messages_returns_rows_when_enabled():
+    """Проверить, что get_cached_messages возвращает строки из кэша."""
+    config = ArchiveConfig(lazgram_cache_enabled=True)
+    db = ArchiveDB(config=config)
+
+    # Mock pool.acquire() контекст
+    mock_conn = AsyncMock()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    mock_rows = [
+        {"message_id": 1, "chat_id": 100, "sender_id": 200, "text": "msg1", "sent_at": now, "raw_json": {}, "cached_at": now},
+        {"message_id": 2, "chat_id": 100, "sender_id": 200, "text": "msg2", "sent_at": now, "raw_json": {}, "cached_at": now},
+    ]
+    mock_conn.fetch = AsyncMock(return_value=mock_rows)
+
+    db.pool = MagicMock()
+    db.pool.acquire = MagicMock()
+    db.pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    db.pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    result = await db.get_cached_messages(chat_id=100, limit=20)
+    assert result["has_cached"] is True
+    assert len(result["messages"]) == 2
+    assert result["messages"][0]["message_id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_cached_messages_disabled():
+    """Проверить, что get_cached_messages возвращает пусто при cache_enabled=false."""
+    config = ArchiveConfig(lazgram_cache_enabled=False)
+    db = ArchiveDB(config=config)
+
+    result = await db.get_cached_messages(chat_id=100, limit=20)
+    assert result["has_cached"] is False
+    assert result["messages"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_recent_messages_cache_hit():
+    """Проверить, что get_recent_messages возвращает coverage='cached' при наличии кэша."""
+    config = ArchiveConfig(lazgram_cache_enabled=True)
+    db = ArchiveDB(config=config)
+
+    # Mock cache hit
+    mock_conn = AsyncMock()
+    cached_msg = {
+        "id": 1,
+        "message_id": 1,
+        "chat_id": 100,
+        "sender_id": 200,
+        "text": "cached message",
+        "sent_at": datetime.datetime.now(datetime.timezone.utc),
+        "raw_json": {},
+        "cached_at": datetime.datetime.now(datetime.timezone.utc),
+    }
+    mock_conn.fetch = AsyncMock(return_value=[cached_msg])
+
+    db.pool = MagicMock()
+    db.pool.acquire = MagicMock()
+    db.pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    db.pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    result = await db.get_recent_messages(dialog_id=100)
+    assert result["coverage"] == "cached"
+    assert len(result["messages"]) == 1
+    assert "cached_at" in result
+
+
+@pytest.mark.asyncio
+async def test_get_recent_messages_fallback_to_archive():
+    """Проверить, что get_recent_messages падает на public.messages когда кэш пуст."""
+    config = ArchiveConfig(lazgram_cache_enabled=True)
+    db = ArchiveDB(config=config)
+
+    # Mock: кэш пуст, но архив есть
+    mock_conn = AsyncMock()
+
+    # First call: get_cached_messages returns empty
+    cache_result = []
+    # Second call: search_messages returns archive data
+    archive_result = [
+        {"id": 1, "sender_id": 200, "sender_name": "200", "text": "archive message", "date": datetime.datetime.now()}
+    ]
+
+    mock_conn.fetch = AsyncMock(side_effect=[cache_result, archive_result])
+    mock_conn.fetchval = AsyncMock(return_value=True)  # EXISTS returns True
+
+    db.pool = MagicMock()
+    db.pool.acquire = MagicMock()
+    db.pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    db.pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    result = await db.get_recent_messages(dialog_id=100)
+    assert result["coverage"] == "archive"
+    assert "hint" in result  # Hint about cache not having data
+
+
+@pytest.mark.asyncio
+async def test_get_recent_messages_flag_false_only_public():
+    """Проверить, что при cache_enabled=false используется только public.messages."""
+    config = ArchiveConfig(lazgram_cache_enabled=False)
+    db = ArchiveDB(config=config)
+
+    mock_conn = AsyncMock()
+    archive_result = [
+        {"id": 1, "sender_id": 200, "sender_name": "200", "text": "message", "date": datetime.datetime.now()}
+    ]
+    mock_conn.fetch = AsyncMock(return_value=archive_result)
+
+    db.pool = MagicMock()
+    db.pool.acquire = MagicMock()
+    db.pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    db.pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    result = await db.get_recent_messages(dialog_id=100)
+    # Should not call tg_map.message_cache, only public.messages
+    assert result["coverage"] == "archive"
+    assert len(result["messages"]) == 1

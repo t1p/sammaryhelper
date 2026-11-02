@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS tg_map.message_cache (
     sent_at     TIMESTAMPTZ NOT NULL,
     raw_json    JSONB,
     cached_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (chat_id, message_id)
+    PRIMARY KEY (account_key, chat_id, message_id)
 );
 
 -- Индекс на account_key, chat_id для быстрого поиска сообщений конкретного чата

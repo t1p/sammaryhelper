@@ -9,32 +9,11 @@ from __future__ import annotations
 
 import datetime
 import json
-import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-logger = logging.getLogger(__name__)
-
-
-def parse_lazgram_cache_enabled(value: Optional[str]) -> bool:
-    """Разбирает переменную окружения LAZGRAM_CACHE_ENABLED в булево значение.
-    Возможные значения: 'true', '1', 'yes' -> True
-    'false', '0', 'no' -> False
-    Неизвестные значения -> False (безопасное поведение — кэш выключен)."""
-    if not value:
-        return True  # default: cache enabled
-    value_lower = str(value).strip().lower()
-    if value_lower in ("true", "1", "yes"):
-        return True
-    if value_lower in ("false", "0", "no"):
-        return False
-    # Неизвестное значение — логируем и выключаем кэш
-    logger.warning(
-        f"Неизвестное значение LAZGRAM_CACHE_ENABLED={value!r}, ожидается "
-        "'true'/'false'/'1'/'0'/'yes'/'no'. Устанавливаю в False (кэш выключен)."
-    )
-    return False
+from utils.cache_flags import parse_lazgram_cache_enabled
 
 
 @dataclass
@@ -96,6 +75,7 @@ class SyncJobConfig:
     chats: list[ChatTarget] = field(default_factory=list)
     max_pages: int = 200
     cache_enabled: bool = True  # Читается из LAZGRAM_CACHE_ENABLED
+    account_key: str = "igor"  # Ключ аккаунта для tg_map (default: "igor")
 
     @classmethod
     def load_file(cls, path: str) -> "SyncJobConfig":

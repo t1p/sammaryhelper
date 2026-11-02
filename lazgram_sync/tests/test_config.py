@@ -3,7 +3,8 @@ import os
 
 import pytest
 
-from lazgram_sync.config import SyncJobConfig, parse_lazgram_cache_enabled
+from lazgram_sync.config import SyncJobConfig
+from utils.cache_flags import parse_lazgram_cache_enabled
 
 
 def test_requires_account_id():

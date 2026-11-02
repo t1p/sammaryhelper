@@ -115,7 +115,7 @@ async def _write_to_tg_map(
                 INSERT INTO tg_map.message_cache
                 (account_key, chat_id, message_id, sender_id, text, sent_at, raw_json, cached_at)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, now())
-                ON CONFLICT (chat_id, message_id) DO UPDATE
+                ON CONFLICT (account_key, chat_id, message_id) DO UPDATE
                 SET text = EXCLUDED.text,
                     sender_id = EXCLUDED.sender_id,
                     raw_json = EXCLUDED.raw_json
@@ -182,6 +182,7 @@ async def sync_chat(
     max_pages: int,
     dry_run: bool,
     cache_enabled: bool = True,
+    account_key: str = "igor",
 ) -> ChatSyncResult:
     result = ChatSyncResult(chat_id=target.chat_id, label=target.label())
     try:
@@ -213,7 +214,7 @@ async def sync_chat(
             if cache_enabled and chat_meta:
                 await _write_to_tg_map(
                     db.connection_pool,
-                    "igor",  # account_key (жёстко для MVP)
+                    account_key,  # account_key из параметра функции
                     chat_meta,
                     messages,
                     chat_id,
@@ -291,6 +292,7 @@ async def run_sync(
                     job.max_pages,
                     dry_run,
                     cache_enabled=job.cache_enabled,
+                    account_key=job.account_key,
                 )
                 summary.results.append(result)
 

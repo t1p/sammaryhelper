@@ -60,7 +60,7 @@ def build_message(message: dict[str, Any]) -> dict[str, Any]:
     """LazGram Message -> словарь для cache_messages()."""
     date = message.get("date")
     if isinstance(date, (int, float)):
-        date = datetime.datetime.utcfromtimestamp(date)
+        date = datetime.datetime.fromtimestamp(date, tz=datetime.timezone.utc)
 
     return {
         "id": message["id"],
@@ -135,7 +135,7 @@ def build_tg_map_message(
     """LazGram Message -> строка для tg_map.message_cache."""
     date = message.get("date")
     if isinstance(date, (int, float)):
-        date = datetime.datetime.utcfromtimestamp(date)
+        date = datetime.datetime.fromtimestamp(date, tz=datetime.timezone.utc)
     elif not isinstance(date, datetime.datetime):
         date = datetime.datetime.now(datetime.timezone.utc)
 
