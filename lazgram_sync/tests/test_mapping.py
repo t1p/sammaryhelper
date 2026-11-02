@@ -1,4 +1,5 @@
 import datetime
+import json
 
 from lazgram_sync.mapping import (
     build_dialog,
@@ -137,4 +138,6 @@ def test_build_tg_map_message():
     assert row["text"] == "Test message"
     assert isinstance(row["sent_at"], datetime.datetime)
     assert row["sent_at"].year == 2030
-    assert row["raw_json"] == msg
+    # raw_json is now a JSON string (asyncpg requires str for JSONB columns)
+    assert isinstance(row["raw_json"], str)
+    assert json.loads(row["raw_json"]) == msg

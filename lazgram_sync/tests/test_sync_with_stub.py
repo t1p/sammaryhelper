@@ -107,7 +107,7 @@ def _clean_tables(temp_postgres):
 
 def test_sync_basic_and_since_filter(temp_postgres, db_config, stub_mcp_script, fixture_env):
     since = BASE_DATE + datetime.timedelta(minutes=200)
-    job = SyncJobConfig(account_id="+79990001122", since=None, chats=[ChatTarget(chat_id=100, since=since)])
+    job = SyncJobConfig(account_id="+79990001122", since=None, cache_enabled=False, chats=[ChatTarget(chat_id=100, since=since)])
     lazgram_config = _lazgram_config(stub_mcp_script)
 
     summary = asyncio.run(run_sync(job, lazgram_config, db_config=db_config, lazgram_extra_env=fixture_env))
@@ -131,7 +131,7 @@ def test_sync_basic_and_since_filter(temp_postgres, db_config, stub_mcp_script, 
 def test_sync_preserves_existing_folder(temp_postgres, db_config, stub_mcp_script, fixture_env):
     asyncio.run(_insert_dialog(temp_postgres, 100, "+79990001122", {"id": 9, "title": "Preserved"}))
 
-    job = SyncJobConfig(account_id="+79990001122", since=None, chats=[ChatTarget(chat_id=100)])
+    job = SyncJobConfig(account_id="+79990001122", since=None, cache_enabled=False, chats=[ChatTarget(chat_id=100)])
     summary = asyncio.run(
         run_sync(job, _lazgram_config(stub_mcp_script), db_config=db_config, lazgram_extra_env=fixture_env)
     )
@@ -144,7 +144,7 @@ def test_sync_preserves_existing_folder(temp_postgres, db_config, stub_mcp_scrip
 
 
 def test_sync_placeholder_dialog_when_chat_not_in_list(temp_postgres, db_config, stub_mcp_script, fixture_env):
-    job = SyncJobConfig(account_id="+79990001122", since=None, chats=[ChatTarget(chat_id=300)])
+    job = SyncJobConfig(account_id="+79990001122", since=None, cache_enabled=False, chats=[ChatTarget(chat_id=300)])
     summary = asyncio.run(
         run_sync(job, _lazgram_config(stub_mcp_script), db_config=db_config, lazgram_extra_env=fixture_env)
     )
@@ -159,7 +159,7 @@ def test_sync_placeholder_dialog_when_chat_not_in_list(temp_postgres, db_config,
 def test_sync_hits_max_pages_safety_cap(temp_postgres, db_config, stub_mcp_script, fixture_env):
     # 250 сообщений, лимит страницы 100 -> нужно 3 страницы на полную историю;
     # ограничиваем 2 страницами без since, чтобы точно упереться в потолок.
-    job = SyncJobConfig(account_id="+79990001122", since=None, max_pages=2, chats=[ChatTarget(chat_id=100)])
+    job = SyncJobConfig(account_id="+79990001122", since=None, max_pages=2, cache_enabled=False, chats=[ChatTarget(chat_id=100)])
     summary = asyncio.run(
         run_sync(job, _lazgram_config(stub_mcp_script), db_config=db_config, lazgram_extra_env=fixture_env)
     )
@@ -172,7 +172,7 @@ def test_sync_hits_max_pages_safety_cap(temp_postgres, db_config, stub_mcp_scrip
 def test_sync_account_id_mismatch_warns(temp_postgres, db_config, stub_mcp_script, fixture_env):
     asyncio.run(_insert_dialog(temp_postgres, 999, "+70000000000", None))
 
-    job = SyncJobConfig(account_id="+79990001122", since=None, chats=[ChatTarget(chat_id=200)])
+    job = SyncJobConfig(account_id="+79990001122", since=None, cache_enabled=False, chats=[ChatTarget(chat_id=200)])
     summary = asyncio.run(
         run_sync(job, _lazgram_config(stub_mcp_script), db_config=db_config, lazgram_extra_env=fixture_env)
     )
