@@ -1,12 +1,14 @@
-"""Доступ на чтение к архивной базе Sammaryhelper (PostgreSQL).
+"""Доступ к архивной базе Sammaryhelper (PostgreSQL).
 
 Схема (см. Sammaryhelper/db_handler.py) создаётся и заполняется самим
-приложением Sammaryhelper. Этот модуль ничего не создаёт и не изменяет —
-только SELECT.
+приложением Sammaryhelper — этот модуль её не меняет (только SELECT).
+Единственное исключение — on-demand запись в tg_map.message_cache
+(роль tg_map_rw) при LazGram live-fallback на MISS, см. _write_to_cache().
 """
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import logging
 import os
@@ -554,53 +556,67 @@ class ArchiveDB:
             lazgram_config.validate()
             account_key = os.environ.get("LAZGRAM_SYNC_ACCOUNT", "igor")
 
-            # Вызываем LazGram для получения истории
-            async with LazgramClient(lazgram_config) as client:
-                history_data = await client.history(chat_id=chat_id, limit=limit)
-                messages = history_data.get("messages", [])
+            # Вызываем LazGram для получения истории. Таймаут на весь блок
+            # (старт subprocess + handshake + tools/call), а не только на
+            # history(): если lazgram-mcp.mjs не отвечает (напр. зависший
+            # процесс), stdio-клиент может ждать бесконечно — не должны
+            # блокировать запрос агента (требование: graceful MISS).
+            timeout_s = float(os.environ.get("LAZGRAM_FALLBACK_TIMEOUT_S", "15"))
+            try:
+                history_data = await asyncio.wait_for(
+                    self._fetch_lazgram_history(lazgram_config, chat_id, limit),
+                    timeout=timeout_s,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"LazGram fallback timed out after {timeout_s}s for chat_id={chat_id}"
+                )
+                return None
 
-                if not messages:
-                    # LazGram вернул пусто, но это не ошибка
-                    return {
-                        "coverage": "none",
-                        "source": "lazgram_fallback",
-                        "messages": [],
-                        "hint": "LazGram вернул пустую историю для этого чата",
-                    }
+            messages = history_data.get("messages", [])
 
-                # Преобразуем сообщения в формат tg_map.message_cache и пишем в БД
-                mapped_messages = [
-                    build_tg_map_message(msg, chat_id, account_key)
-                    for msg in messages
-                ]
-
-                # Пишем в кэш асинхронно, не блокируя ответ (best-effort)
-                try:
-                    await self._write_to_cache(mapped_messages)
-                except Exception as e:
-                    logger.warning(
-                        f"Не удалось записать сообщения в кэш для chat_id={chat_id}: {e}. "
-                        "Всё равно возвращаю результат LazGram."
-                    )
-
-                # Форматируем ответ, приводя к формату public.messages
-                response_messages = [
-                    {
-                        "id": msg["message_id"],
-                        "sender_id": msg["sender_id"],
-                        "sender_name": str(msg["sender_id"]),
-                        "text": msg["text"],
-                        "date": msg["sent_at"],
-                    }
-                    for msg in mapped_messages
-                ]
-
+            if not messages:
+                # LazGram вернул пусто, но это не ошибка
                 return {
-                    "coverage": "cached",  # успешно добавлено в кэш
+                    "coverage": "none",
                     "source": "lazgram_fallback",
-                    "messages": response_messages,
-                    "hint": "данные получены от LazGram и добавлены в кэш",
+                    "messages": [],
+                    "hint": "LazGram вернул пустую историю для этого чата",
                 }
+
+            # Преобразуем сообщения в формат tg_map.message_cache и пишем в БД
+            mapped_messages = [
+                build_tg_map_message(msg, chat_id, account_key)
+                for msg in messages
+            ]
+
+            # Пишем в кэш (best-effort: ошибка записи не должна ломать ответ)
+            try:
+                await self._write_to_cache(mapped_messages)
+            except Exception as e:
+                logger.warning(
+                    f"Не удалось записать сообщения в кэш для chat_id={chat_id}: {e}. "
+                    "Всё равно возвращаю результат LazGram."
+                )
+
+            # Форматируем ответ, приводя к формату public.messages
+            response_messages = [
+                {
+                    "id": msg["message_id"],
+                    "sender_id": msg["sender_id"],
+                    "sender_name": str(msg["sender_id"]),
+                    "text": msg["text"],
+                    "date": msg["sent_at"],
+                }
+                for msg in mapped_messages
+            ]
+
+            return {
+                "coverage": "cached",  # успешно добавлено в кэш
+                "source": "lazgram_fallback",
+                "messages": response_messages,
+                "hint": "данные получены от LazGram и добавлены в кэш",
+            }
 
         except LazgramError as e:
             # LazGram недоступен или ошибка — логируем и возвращаем None
@@ -609,6 +625,18 @@ class ArchiveDB:
         except Exception as e:
             logger.warning(f"Unexpected error in LazGram fallback for chat_id={chat_id}: {e}")
             return None
+
+    @staticmethod
+    async def _fetch_lazgram_history(
+        lazgram_config: LazgramConfig,
+        chat_id: int,
+        limit: int,
+    ) -> dict[str, Any]:
+        """Отдельная корутина, чтобы `asyncio.wait_for` мог прервать весь
+        жизненный цикл клиента (subprocess start + handshake + tools/call),
+        а не только сам вызов tools/call."""
+        async with LazgramClient(lazgram_config) as client:
+            return await client.history(chat_id=chat_id, limit=limit)
 
     async def _write_to_cache(self, messages: list[dict[str, Any]]) -> None:
         """Пишет сообщения в tg_map.message_cache. Используется отдельное соединение (не пул).
@@ -630,13 +658,20 @@ class ArchiveDB:
                 timeout=30,
             )
 
-            # Вставляем с ON CONFLICT для идемпотентности
-            # (в случае, если запись уже существует)
+            # ON CONFLICT DO UPDATE для идемпотентности — тот же паттерн, что
+            # и batch-синк (lazgram_sync/sync.py): повторная live-выгрузка
+            # того же сообщения обновляет text/sender_id/raw_json и cached_at
+            # вместо молчаливого игнорирования (DO NOTHING скрыл бы правки
+            # сообщения, сделанные в Telegram между вызовами).
             insert_sql = """
                 INSERT INTO tg_map.message_cache
-                    (account_key, chat_id, message_id, sender_id, text, sent_at, raw_json)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT (account_key, chat_id, message_id) DO NOTHING
+                    (account_key, chat_id, message_id, sender_id, text, sent_at, raw_json, cached_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+                ON CONFLICT (account_key, chat_id, message_id) DO UPDATE
+                SET text = EXCLUDED.text,
+                    sender_id = EXCLUDED.sender_id,
+                    raw_json = EXCLUDED.raw_json,
+                    cached_at = now()
             """
 
             for msg in messages:

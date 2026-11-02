@@ -356,3 +356,61 @@ async def test_try_lazgram_fallback_empty_response(monkeypatch):
     assert result["source"] == "lazgram_fallback"
     assert result["coverage"] == "none"
     assert result["messages"] == []
+
+
+@pytest.mark.asyncio
+async def test_try_lazgram_fallback_timeout(monkeypatch):
+    """Если LazGram подвис (не ответил вовсе), fallback не должен блокировать
+    запрос агента — должен вернуть None по таймауту (graceful MISS), а не
+    висеть бесконечно."""
+    config = ArchiveConfig(lazgram_cache_enabled=True)
+    db = ArchiveDB(config=config)
+
+    async def hanging_fetch(lazgram_config, chat_id, limit):
+        await asyncio.sleep(10)  # дольше таймаута теста
+        return {"messages": []}
+
+    monkeypatch.setattr(db, "_fetch_lazgram_history", hanging_fetch)
+
+    mock_config = MagicMock()
+    mock_config.validate = MagicMock()
+    monkeypatch.setattr("mcp_archive_server.db.LazgramConfig.load", lambda: mock_config)
+    monkeypatch.setenv("LAZGRAM_SYNC_ACCOUNT", "test_account")
+    monkeypatch.setenv("LAZGRAM_FALLBACK_TIMEOUT_S", "0.05")
+
+    result = await asyncio.wait_for(db._try_lazgram_fallback(chat_id=100, limit=20), timeout=2)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_write_to_cache_on_conflict_updates_existing_row():
+    """Повторная запись того же (account_key, chat_id, message_id) должна
+    обновлять text/sender_id/raw_json/cached_at (ON CONFLICT DO UPDATE), а не
+    молча игнорировать изменения — так же, как это делает batch-синк
+    (lazgram_sync/sync.py)."""
+    config = ArchiveConfig(lazgram_cache_enabled=True)
+    db = ArchiveDB(config=config)
+    db._get_write_password = MagicMock(return_value="")
+
+    mock_conn = AsyncMock()
+    mock_conn.execute = AsyncMock()
+    mock_conn.close = AsyncMock()
+
+    with patch("mcp_archive_server.db.asyncpg.connect", AsyncMock(return_value=mock_conn)):
+        await db._write_to_cache([
+            {
+                "account_key": "igor",
+                "chat_id": 100,
+                "message_id": 1,
+                "sender_id": 200,
+                "text": "edited text",
+                "sent_at": datetime.datetime.now(datetime.timezone.utc),
+                "raw_json": "{}",
+            }
+        ])
+
+    mock_conn.execute.assert_called_once()
+    sql = mock_conn.execute.call_args[0][0]
+    assert "ON CONFLICT (account_key, chat_id, message_id) DO UPDATE" in sql
+    assert "SET text = EXCLUDED.text" in sql
