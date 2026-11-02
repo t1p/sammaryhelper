@@ -15,6 +15,7 @@ Sammaryhelper.db_handler.DatabaseHandler.cache_dialogs()/cache_messages().
 from __future__ import annotations
 
 import datetime
+import json
 from typing import Any, Optional
 
 _TYPE_MAP = {
@@ -146,5 +147,5 @@ def build_tg_map_message(
         "sender_id": message.get("senderId"),
         "text": message.get("text", ""),
         "sent_at": date if date.tzinfo else date.replace(tzinfo=datetime.timezone.utc),
-        "raw_json": message,  # Сохраняем весь объект для справки
+        "raw_json": json.dumps(message, ensure_ascii=False, default=str),  # JSONB/TEXT expects a string
     }

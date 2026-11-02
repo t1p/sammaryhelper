@@ -10,6 +10,7 @@ structured content. Ошибки — isError=true с текстом причин
 from __future__ import annotations
 
 import json
+import os
 from contextlib import AsyncExitStack
 from typing import Any, Optional
 
@@ -33,10 +34,15 @@ class LazgramClient:
         self._session: Optional[ClientSession] = None
 
     async def __aenter__(self) -> "LazgramClient":
+        # Forward XDG_RUNTIME_DIR so lazgram-mcp.mjs can locate its Unix socket.
+        # StdioServerParameters(env=...) replaces the entire subprocess environment,
+        # so variables present in the parent process must be forwarded explicitly.
+        _forwarded = {k: os.environ[k] for k in ("XDG_RUNTIME_DIR",) if k in os.environ}
         params = StdioServerParameters(
             command=self._config.node_bin,
             args=[self._config.mcp_script],
             env={
+                **_forwarded,
                 "LAZGRAM_MCP_ACCOUNTS": f"{self._config.account}:read-only",
                 "LAZGRAM_MCP_INITIATOR": self._config.initiator,
                 "LAZGRAM_MCP_TIMEOUT_MS": str(self._config.timeout_ms),
